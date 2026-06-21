@@ -1,0 +1,147 @@
+[用户请求] --> Agent
+                |
+                v
+            TaskRouter (拆解任务)
+                |
+                v (子任务列表)
+            Agent (遍历执行计划)
+                |
+                v (子任务 + 需求标签)
+            Router (匹配模型)
+                |
+                v (可用的模型地址)
+            llmClient (发起HTTP调用)
+                |
+                v (原始结果/错误码)
+            Agent (收集结果, 遇错则调Router再要地址)
+                |
+                v (所有原始结果)
+            Builder (拼装JSON)
+                |
+                v (统一响应)
+[前端] <--  Agent
+
+
+================================================
+================================================
+
+模块名：Router
+职责：模型注册、能力匹配、备选切换
+
+输入：
+    - capability_required: string（如 "text-generation","image-generation"）
+    - failed_models: list[string]（可选，已失败的模型名列表）
+
+输出：
+    - 成功：{
+        "model_name": "model-x", 
+        "endpoint": "http://...", 
+        "api_key": "..."
+        }
+    - 失败：{
+        "error": "NO_AVAILABLE_MODEL"
+        }
+
+核心逻辑：
+    1. 从注册表中查找所有具备capability_required能力的模型
+    2. 过滤掉failed_models中已失败的模型
+    3. 在剩余模型中按优先级排序（先注册的优先）
+    4. 返回第一个可用模型的连接信息
+    5. 如果无可用模型，返回NO_AVAILABLE_MODEL错误
+
+
+-------------------------------------------------------------
+模块名：Agent
+职责：总控，面向用户，负责驱动状态机
+
+输入：
+    - user_input: string (用户输入的文本)
+
+输出：
+    - 成功：
+   {
+        "task_id": "uuid-xxxx",
+        "task_status": "SUCCESS",
+        "system_status": "READY",
+        "data": { ... }
+    }
+    - 失败：
+      {
+        "task_id":"uuid-xxxx",
+        "task_status":"FAILED",
+        "system_status": "READY", 
+        "data": {
+            "type":"text",
+            "message": "服务暂时不可用，请稍后重试"
+            }
+    }
+
+核心逻辑：
+    核心逻辑（按状态机流转描述）：
+
+[状态: READY]
+- 做什么：收到用户输入，生成task_id，将状态切换为PLANNING，调用TaskRouter。
+- 转换条件：收到输入，生成id
+- 下一状态：PLANNING
+
+[状态: PLANNING]
+- 做什么：收到TaskRouter返回的执行计划，将状态切换为ROUTING，取出第一个子任务的能力需求。
+- 转换条件（成功/失败）：
+    成功：收到子任务的capability，
+    失败：TaskRouter返回错误（无法解析意图/无法生成执行计划）→ 进FAILED。
+- 下一状态（成功/失败分别是什么）：ROUTING
+
+[状态：ROUTING]
+- 做什么：根据capability,寻找符合的大模型，将状态转为CALLING
+- 转换条件（成功/失败）：
+    成功：找到符合的大模型
+    失败：如果Router返回NO_AVAILABLE_MODEL，直接进FAILED。
+- 下一状态（成功/失败）：CALLING
+
+[状态：CALLING]
+- 做什么：调动大模型执行子任务，根据任务完成情况，将状态转为最终状态SUCCESS/PARTIAL_SUCCESS/FAILED
+- 转换条件（成功/失败）：
+    成功：  标记当前子任务完成 → 检查执行计划是否还有剩余子任务。
+            有剩余 → 回到ROUTING（取下一个子任务）
+            无剩余 → 进SUCCESS
+    失败：（超时/401/503）→ 是否还有备选模型未尝试？
+            有备选 → 回到ROUTING（重试当前子任务，但把失败模型名传给Router）
+            无备选 → 检查是否有已成功的子任务。
+            有 → 进PARTIAL_SUCCESS
+            无 → 进FAILED
+- 下一状态（成功/失败）：SUCCESS/PARTIAL_SUCCESS/FAILED
+
+[状态：SUCCESS]
+- 调用Builder拼装最终JSON，返回给前端。
+- 转换条件（成功/失败）：
+    成功：完成任务
+
+[状态：PARTIAL_SUCCESS]
+- 调用Builder拼装最终JSON，返回给前端。
+- 转换条件（成功）：至少一个子任务成功 + 至少一个子任务彻底失败（所有备选耗尽）
+
+[状态：FAILED]
+- 调用Builder拼装最终JSON，返回给前端。
+- 转换条件（失败）：所有子任务都彻底失败，无任何成功子任务
+
+
+--------------------------------------------------------------
+模块名：TaskRouter
+职责：根据ueser_input拆分客户需求
+
+输入：ueser_input:string
+
+输出：
+    - 成功：
+    {
+        "task_id":"uuid-xxxx",
+        "user_required":"string",
+    }
+核心逻辑：
+    1.
+
+
+
+
+
+
