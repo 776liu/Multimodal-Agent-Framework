@@ -1,0 +1,472 @@
+场景1：单步文本任务(输入文字，返回文字)
+
+前置条件：
+  - 系统启动完成
+  - 模型X（主）、模型Y（备）已在模型注册中心注册
+  - X模型能力标签：["text-generation", "translation"]
+  - Y模型能力标签：["text-generation"]
+
+触发事件：
+  用户输入纯文本，不包含对图片/视频的生成请求
+
+状态流转：
+  READY -> PLANNING（军师Agent解析意图）-> ROUTING（匹配到模型X）-> CALLING（调用模型X）-> SUCCESS
+  READY -> ... -> CALLING -> 模型X超时/错误 -> FALLBACK（切换模型Y）-> CALLING -> SUCCESS
+  READY -> ... -> FALLBACK -> 模型Y也失败 -> DEAD（不可恢复，终态）
+
+验收标准：
+  成功路径：前端收到SUCCESS
+    {
+        "task_id":"uuid",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "data": {
+            "type":"text",
+            "content":"返回的文本内容"}
+            }
+    
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "timestamp":"(保存时间戳)"
+        "call_chain": [
+            {
+                "model_name": "model-x",
+                "capability": "text-generation",
+                "status": "SUCCESS",
+                "attempted_at": "(保存时间戳)"
+            }
+        ]
+    }
+
+
+  降级路径：模型X失败（超时/401/503），日志记录切换事件，自动调用模型Y，前端收到SUCCESS
+    {
+        "task_id":"uuid-xx"
+        "task_status": "SUCCESS", 
+        "system_status":"READY",
+        "data": {
+            "type":"text",
+            "content":"返回的文本内容"}
+    }    
+    用户无感知,
+    
+    军师agent返回json保存到日志：
+    {
+    "task_id":"uuid-xxxx",
+    "timestamp":"(保存时间戳)",
+    "task_status":"FALLBACK_SUCCESS",
+    "system_status":"READY",
+    "call_chain":[
+        {
+            "model_name":"model-x",
+            "capability":"text-generation",
+            "status"::"FAILED",
+            "error_code":xxx,
+            "attempted_at":"(保存时间戳)"
+            },
+        {
+            "model_name":"model-y",
+            "capability":"text-generation",
+            "status"::"SUCCESS",
+            "attempted_at":"(保存时间戳)"
+        }
+    ], //模型降级路线
+    "error_summary":"PRIMARY_MODEL_FAILED"
+    }
+
+
+  失败路径：所有模型耗尽，前端收到
+   {
+        "task_id":"uuid-xxxx",
+        "task_status":"FAILED",
+        "system_status": "READY", 
+        "data": {
+            "type":"text",
+            "message": "服务暂时不可用，请稍后重试"
+            }
+    }
+    系统日志记录完整调用链和失败码
+
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "timestamp":"(保存时间戳)"
+        "task_status":"FAILED"
+        "system_status":"READY"
+        "call_chain":[
+            {
+                "model_name":"model-x",
+                "capability":"text-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+                },
+            {
+                 "model_name":"model-y",
+                "capability":"text-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+            }
+        ], //模型降级路线
+        "error_summary":"ALL_MODEL_FAILED"
+    }
+
+
+===========================================
+场景2：单步多模态任务(输入文字，返回图片/视频)
+
+前置条件：
+  - 系统启动完成
+  - 模型X（主）、模型Y（备）已在模型注册中心注册
+  - X模型能力标签：["image-generation"]
+  - Y模型能力标签：["image-generation"]
+
+触发事件：
+  用户输入文本，包含对图片/视频的生成请求
+
+状态流转：
+  READY -> PLANNING（军师Agent解析意图）-> ROUTING（匹配到模型X）-> CALLING（调用模型X）-> SUCCESS
+  READY -> ... -> CALLING -> 模型X超时/错误 -> FALLBACK（切换模型Y）-> CALLING -> SUCCESS
+  READY -> ... -> FALLBACK -> 模型Y也失败 -> DEAD（不可恢复，终态）
+
+验收标准：
+  成功路径：前端收到SUCCESS
+    {
+        "task_id":"uuid",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "data": {
+            "type":"image",
+            "url":"(图片路径)"}
+    }
+    
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "timestamp":"(保存时间戳)"
+        "call_chain": [
+            {
+                "model_name": "model-x",
+                "capability": "image-generation",
+                "status": "SUCCESS",
+                "attempted_at": "(保存时间戳)"
+            }
+        ]
+    }
+
+
+  降级路径：模型X失败（超时/401/503），日志记录切换事件，自动调用模型Y，前端收到SUCCESS
+    {
+        "task_id":"uuid",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "data": {
+            "type":"image",
+            "url":"(图片路径/data/outputs/img_001.png)"}
+    }
+    用户无感知,
+    
+    军师agent返回json保存到日志：
+    {
+    "task_id":"uuid-xxxx",
+    "timestamp":"(保存时间戳)",
+    "task_status":"FALLBACK_SUCCESS",
+    "system_status":"READY",
+    "call_chain":[
+        {
+            "model_name":"model-x",
+            "capability":"image-generation",
+            "status"::"FAILED",
+            "error_code":xxx,
+            "attempted_at":"(保存时间戳)"
+            },
+        {
+            "model_name":"model-y",
+            "capability":"image-generation",
+            "status"::"SUCCESS",
+            "attempted_at":"(保存时间戳)"
+        }
+    ], //模型降级路线
+    "error_summary":"PRIMARY_MODEL_FAILED"
+    }
+
+
+  失败路径：所有模型耗尽，前端收到
+   {
+        "task_id":"uuid-xxxx",
+        "task_status":"FAILED",
+        "system_status": "READY", 
+        "data": {
+            "type":"text",
+            "message": "服务暂时不可用，请稍后重试"
+            }
+    }
+    系统日志记录完整调用链和失败码
+
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "timestamp":"(保存时间戳)"
+        "task_status":"FAILED"
+        "system_status":"READY"
+        "call_chain":[
+            {
+                "model_name":"model-x",
+                "capability":"image-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+                },
+            {
+                 "model_name":"model-y",
+                "capability":"image-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+            }
+        ], //模型降级路线
+        "error_summary":"ALL_MODEL_FAILED"
+    }
+
+
+==========================================================
+场景3：多步多模态任务
+
+前置条件：
+  - 系统启动完成
+  - 模型X（主）、模型Y（备）已在模型注册中心注册
+  - 模型A（主）、模型B（备）已在模型注册中心注册
+  - X模型能力标签：["image-generation"]
+  - Y模型能力标签：["image-generation"]
+  - A模型能力标签：["text-generation"]
+  - B模型能力标签：["text-generation"]
+
+触发事件：
+  用户输入文本，需要在生成的回答的基础上再次进行生成。
+
+状态流转：
+  READY -> PLANNING（军师Agent解析意图）-> PROCESSING -> （ 
+    ROUTING（匹配到模型X）-> CALLING（调用模型X）-> 
+    ROUTING（匹配到模型A）-> CALLING（调用模型A））
+    -> SUCCESS
+  READY -> PLANNING（军师Agent解析意图）-> PROCESSING -> （ 
+    ROUTING（匹配到模型X）-> CALLING（调用模型X）-> 模型X超时/错误 -> FALLBACK（切换模型Y）-> CALLING 
+    ROUTING（匹配到模型A）-> CALLING（调用模型A）-> 模型A超时/错误 -> FALLBACK（切换模型B）-> CALLING ）
+    -> SUCCESS
+  READY -> ... -> FALLBACK -> 模型X/Y成功 -> 模型B失败 -> PARTIAL_SUCCESS
+  READY -> ... -> FALLBACK -> 模型Y和模型B都失败 -> DEAD（不可恢复，终态）
+
+验收标准：
+  成功路径：前端收到SUCCESS
+    {
+        "task_id":"uuid",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "data": {
+            "results": [
+                {"type": "image", "url": "(图片路径)"},
+                {"type": "text", "content": "返回的文本内容"}
+            ]
+        }
+    }
+    
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "task_status": "SUCCESS", 
+        "system_status":"READY"
+        "timestamp":"(保存时间戳)"
+        "call_chain": [
+            {
+                "model_name": "model-x",
+                "capability": "image-generation",
+                "status": "SUCCESS",
+                "attempted_at": "(保存时间戳)"
+            },
+            {
+                "model_name": "model-A",
+                "capability": "text-generation",
+                "status":"SUCCESS"
+                "attempted_at": "(保存时间戳)"
+            }
+        ]
+    }
+
+
+  降级路径：模型X失败（超时/401/503），日志记录切换事件，自动调用模型Y，
+    模型A失败（超时/401/503），日志记录切换事件，自动调用模型B，   
+    前端收到SUCCESS
+    {
+        "task_id":"uuid",
+        "task_status": "SUCCESS", //若只有部分任务步骤返回成功则为PARTIAL_SUCCESS
+        "system_status":"READY"
+        "data": {
+            "results": [
+                {"type": "image", "url": "(图片路径)"},
+                {"type": "text", "content": "返回的文本内容"} 
+            ]       //status:PARTIAL_SUCCESS时只返回成功执行任务的结果
+        }
+    }
+    用户无感知,
+    
+    军师agent返回json保存到日志：
+    //两个步骤的首个大模型都失败，(模型X，模型A)
+    {
+    "task_id":"uuid-xxxx",
+    "timestamp":"(保存时间戳)",
+    "task_status":"FALLBACK_SUCCESS",//若只有部分任务步骤返回成功则为PARTIAL_SUCCESS
+    "system_status":"READY",
+    "call_chain":[
+        {
+            "model_name":"model-x",
+            "capability":"image-generation",
+            "status"::"FAILED",
+            "error_code":xxx,
+            "attempted_at":"(保存时间戳)"
+        },//若第一个任务步骤的大模型成功则为SCUCCESS，且不走下一步调用链
+        {
+            "model_name":"model-y",
+            "capability":"image-generation",
+            "status"::"SUCCESS",
+            "attempted_at":"(保存时间戳)"
+        },
+        {
+            "model_name":"model-A",
+            "capability":"text-generation",
+            "status"::"FAILED",
+            "error_code":xxx,
+            "attempted_at":"(保存时间戳)"
+        },//若第二个任务步骤的大模型成功则为SCUCCESS，不走下一步调用链
+        {
+            "model_name":"model-B",
+            "capability":"text-generation",
+            "status"::"SUCCESS",
+            "attempted_at":"(保存时间戳)"
+        }
+    ], //模型降级路线
+    "error_summary": [
+        {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+        {"step": 2, "type": "PRIMARY_MODEL_FAILED"}
+    ]
+    }
+
+    部分成功路径（PARTIAL_SUCCESS）：第一步成功，第二步所有模型耗尽
+
+    触发条件：
+      第一步（生图）：模型X或Y成功返回图片
+      第二步（描述）：模型A和B全部失败
+
+    前端收到：
+      {
+          "task_id":"uuid-xxxx",
+          "task_status":"PARTIAL_SUCCESS",
+          "system_status":"READY",
+          "data":{
+              "results":[
+                  {"type": "image", "url": "(图片路径)"}
+              ]
+          }
+      }
+
+    系统日志：
+      {
+          "task_id":"uuid-xxxx",
+          "timestamp":"(保存时间戳)"
+          "task_status":"PARTIAL_SUCCESS",
+          "system_status":"READY",
+          "call_chain":[
+          {
+              "model_name":"model-x",
+              "capability":"image-generation",
+              "status"::"FAILED",
+              "error_code":xxx,
+              "attempted_at":"(保存时间戳)"
+          },//若第一个任务步骤的大模型成功则为SCUCCESS，则不走下一步调用链
+          {
+              "model_name":"model-y",
+              "capability":"image-generation",
+              "status"::"SUCCESS",
+              "attempted_at":"(保存时间戳)"
+          },
+          {
+              "model_name":"model-A",
+              "capability":"text-generation",
+              "status"::"FAILED",
+              "error_code":xxx,
+              "attempted_at":"(保存时间戳)"
+          },
+          {
+              "model_name":"model-B",
+              "capability":"text-generation",
+              "status"::"FAILED",
+              "attempted_at":"(保存时间戳)"
+          }
+      ], //模型降级路线
+      "error_summary": [
+          {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+          {"step": 2, "type": "ALL_MODEL_FAILED"}
+      ]
+    }
+
+  失败路径：所有模型耗尽，前端收到
+   {
+        "task_id":"uuid-xxxx",
+        "task_status":"FAILED",
+        "system_status": "READY", 
+        "data": {
+            "type":"text",
+            "message": "服务暂时不可用，请稍后重试"
+            }
+    }
+    系统日志记录完整调用链和失败码
+
+    军师agent返回json保存到日志：
+    {
+        "task_id":"uuid-xxxx",
+        "timestamp":"(保存时间戳)"
+        "task_status":"FAILED"
+        "system_status":"READY"
+        "call_chain":[
+            {
+                "model_name":"model-x",
+                "capability":"image-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+                },
+            {
+                 "model_name":"model-y",
+                "capability":"image-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+            }
+            {
+                "model_name":"model-A",
+                "capability":"text-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+                },
+            {
+                 "model_name":"model-B",
+                "capability":"text-generation",
+                "status"::"FAILED",
+                "error_code":xxx,
+                "attempted_at":"(保存时间戳)"
+            }
+        ], //模型降级路线
+        "error_summary": [
+            {"step": 1, "type": "ALL_MODEL_FAILED"},
+            {"step": 2, "type": "ALL_MODEL_FAILED"}
+        ]
+    }
+
+
+==========================================================
