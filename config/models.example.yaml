@@ -1,0 +1,25 @@
+models:
+  - model_name: "task-router-model"
+    endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "text-generation"
+
+  - model_name: "model-x"
+    endpoint: "https://dashscope.aliyuncs.com/..."
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "image-generation"
+
+  - model_name: "model-y"
+    endpoint: "https://dashscope.aliyuncs.com/..."
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "image-generation"
+
+  - model_name: "model-a"
+    endpoint: "https://dashscope.aliyuncs.com/..."
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "text-generation"
+
+  - model_name: "model-b"
+    endpoint: "https://dashscope.aliyuncs.com/..."
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "text-generation"

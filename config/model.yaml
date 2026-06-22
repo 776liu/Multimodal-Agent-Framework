@@ -1,0 +1,24 @@
+models:
+  - registered_name: "qwen-plus"
+    model_name: "qwen3.7-plus"
+    endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+    api_key: "sk-ws-H.RPPMHEI.ui3P.MEQCIGPMsCB5sX8hZzbCdSGd5JDUqkw7GOfqxDD458NlwR_NAiAq5uLZTXl6_eceBq8LVF7DfZi7OLmfJcxLe-HWfaBtKQ"
+    capability: "text-generation"
+
+  - registered_name: "qwen-max"
+    model_name: "qwen3.7-max-2026-06-08"
+    endpoint: "https://llm-o64n03n0kfnntzlo.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    api_key: "sk-ws-H.RPPMHEI.ui3P.MEQCIGPMsCB5sX8hZzbCdSGd5JDUqkw7GOfqxDD458NlwR_NAiAq5uLZTXl6_eceBq8LVF7DfZi7OLmfJcxLe-HWfaBtKQ"
+    capability: "text-generation"
+
+  - registered_name: "qwen-image"
+    model_name: "qwen-image-2.0-pro"
+    endpoint: "https://llm-o64n03n0kfnntzlo.cn-beijing.maas.aliyuncs.com/api/v1"
+    api_key: "sk-ws-H.RPPMHEI.ui3P.MEQCIGPMsCB5sX8hZzbCdSGd5JDUqkw7GOfqxDD458NlwR_NAiAq5uLZTXl6_eceBq8LVF7DfZi7OLmfJcxLe-HWfaBtKQ"
+    capability: "image-generation"
+
+  - registered_name: "wan-image"
+    model_name: "wan2.7-image-pro"
+    endpoint: "https://llm-o64n03n0kfnntzlo.cn-beijing.maas.aliyuncs.com/api/v1"
+    api_key: "sk-ws-H.RPPMHEI.ui3P.MEQCIGPMsCB5sX8hZzbCdSGd5JDUqkw7GOfqxDD458NlwR_NAiAq5uLZTXl6_eceBq8LVF7DfZi7OLmfJcxLe-HWfaBtKQ"
+    capability: "image-generation"
