@@ -127,21 +127,249 @@
 
 --------------------------------------------------------------
 模块名：TaskRouter
-职责：根据ueser_input拆分客户需求
-
+职责：意图解析 + 任务拆解 + 生成执行计划
 输入：ueser_input:string
 
 输出：
     - 成功：
     {
-        "task_id":"uuid-xxxx",
-        "user_required":"string",
+        "intent": "multi_step_multimodal",
+        "subtasks": [
+            {"step": 1, "capability": "image-generation", "prompt": "未来城市的图片"},
+            {"step": 2, "capability": "text-generation", "prompt": "描述这张图片"}
+        ]
+    }
+    -失败：{
+        "error": "INTENT_PARSE_FAILED"
     }
 核心逻辑：
-    1.
+    1.解析用户输入的文本，识别意图类型（单步文本/单步多模态/多步多模态）   
+    2.如果是多步任务，拆解为有序的子任务列表，每个子任务包含步骤序号、所需模型能力和生成该步骤的提示词
+    3.如果是单步任务，返回只包含一个子任务的列表
+    4.返回完整的执行计划（子任务列表）给Agent
+    5.如果无法识别意图，返回INTENT_PARSE_FAILED
 
 
 
+--------------------------------------------------------------------
+模块名：llmClient
+职责：封装HTTP调用，只负责请求/响应/超时
 
+输入：
+    {
+        "model_name": "model-x",
+        "endpoint": "http://...",
+        "api_key": "...",
+        "prompt": "生成一张未来城市的图片",
+        "output_type": "image"
+    }
+输出：
+    - 成功：
+        {
+            "status": "SUCCESS",
+            "data": {
+                "type": "image",
+                "url": "/data/outputs/img_001.png"
+            }
+        }
+    - 失败：
+        {
+            "status": "FAILED",
+            "error_code": 503,
+            "model_name": "model-x"
+        }
+核心逻辑：
+    接收模型连接信息和提示词，构造HTTP请求
+    发起调用，设置超时时间（默认30秒）
+    收到响应后，解析返回内容并标准化为统一格式
+    如果超时或返回错误状态码，返回失败状态和错误码
+    不关心被调用的模型是首选还是备选，不关心重试逻辑,不负责调用链的汇总和拼接，每次调用独立返回结果。
+
+
+--------------------------------------------------------------
+模块名：Builder
+职责：收集子任务结果，拼装统一JSON
+
+输入：
+    {
+        "task_id": "uuid-xxxx",
+        "final_status": "SUCCESS",
+        "results": [
+            {"type": "image", "url": "/data/outputs/img_001.png"},
+            {"type": "text", "content": "这是一张未来城市的图片..."}
+        ],
+        "call_chain": [
+            {"model_name": "model-x", "capability": "image-generation", "status": "SUCCESS", "attempted_at": "..."},
+            {"model_name": "model-A", "capability": "text-generation", "status": "SUCCESS", "attempted_at": "..."}
+        ]
+    }
+输出：
+    - 成功（final_status为FALLBACK_SUCCESS）：
+    {
+        "frontend_response":{
+            "task_id": "uuid-xxxx",
+            "task_status": "SUCCESS",
+            "system_status": "READY",
+            "data": {
+                "results": [
+                    {"type": "image", "url": "/data/outputs/img_001.png"},
+                    {"type": "text", "content": "这是一张未来城市的图片..."}
+                ]
+            }
+        },
+        "log_record":{
+            "task_id":"uuid-xxxx",
+            "timestamp":"(保存时间戳)",
+            "task_status":"FALLBACK_SUCCESS",//若只有部分任务步骤返回成功则为PARTIAL_SUCCESS
+            "system_status":"READY",
+            "call_chain":[
+                {
+                    "model_name":"model-x",
+                    "capability":"image-generation",
+                    "status"::"FAILED",
+                    "error_code":xxx,
+                    "attempted_at":"(保存时间戳)"
+                },//若第一个任务步骤的大模型成功则为SCUCCESS，且不走下一步调用链
+                {
+                    "model_name":"model-y",
+                    "capability":"image-generation",
+                    "status"::"SUCCESS",
+                    "attempted_at":"(保存时间戳)"
+                },
+                {
+                    "model_name":"model-A",
+                    "capability":"text-generation",
+                    "status"::"FAILED",
+                    "error_code":xxx,
+                    "attempted_at":"(保存时间戳)"
+                },//若第二个任务步骤的大模型成功则为SCUCCESS，不走下一步调用链
+                {
+                    "model_name":"model-B",
+                    "capability":"text-generation",
+                    "status"::"SUCCESS",
+                    "attempted_at":"(保存时间戳)"
+                }
+            ], //模型降级路线
+            "error_summary": [
+                {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+                {"step": 2, "type": "PRIMARY_MODEL_FAILED"}
+            ]
+        }
+    }
+
+    - 成功（final_status为PARTIAL_SUCCESS）：
+        {
+            "frontend_response":{
+                "task_id": "uuid-xxxx",
+                "task_status": "PARTIAL_SUCCESS",
+                "system_status": "READY",
+                "data": {
+                        "results": [
+                            {"type": "image", "url": "/data/outputs/img_001.png"},
+                            {"type": "text", "content": "这是一张未来城市的图片..."}
+                        ]
+                    }
+            },
+            "log_record":{
+                    "task_id":"uuid-xxxx",
+                    "timestamp":"(保存时间戳)"
+                    "task_status":"PARTIAL_SUCCESS",
+                    "system_status":"READY",
+                    "call_chain":[
+                      {
+                          "model_name":"model-x",
+                          "capability":"image-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx,
+                          "attempted_at":"(保存时间戳)"
+                      },//若第一个任务步骤的大模型成功则为SCUCCESS，则不走下一步调用链
+                      {
+                          "model_name":"model-y",
+                          "capability":"image-generation",
+                          "status"::"SUCCESS",
+                          "attempted_at":"(保存时间戳)"
+                      },
+                      {
+                          "model_name":"model-A",
+                          "capability":"text-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx,
+                          "attempted_at":"(保存时间戳)"
+                      },
+                      {
+                          "model_name":"model-B",
+                          "capability":"text-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx
+                          "attempted_at":"(保存时间戳)"
+                      }
+                  ], //模型降级路线
+                  "error_summary": [
+                      {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+                      {"step": 2, "type": "ALL_MODEL_FAILED"}
+                  ]
+            }
+        }
+
+
+    - 失败（final_status为FAILED）：
+        {
+                "frontend_response":{
+                "task_id": "uuid-xxxx",
+                "task_status": "FAILED",
+                "system_status": "READY",
+                "data": {
+                    "type": "text",
+                    "message": "服务暂时不可用，请稍后重试"
+                }
+            },
+            "log_record":{
+                "task_id":"uuid-xxxx",
+                "timestamp":"（保存时间戳）",
+                "task_status":"FAILED",
+                "system_status":"READY",
+                "call_chain":[
+                    {
+                        "model_name":"model-x",
+                        "capability":"image-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-Y",
+                        "capability":"image-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-A",
+                        "capability":"text-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-B",
+                        "capability":"text-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                ],
+                "error_summary": [
+                      {"step": 1, "type": "ALL_MODEL_FAILED"},
+                      {"step": 2, "type": "ALL_MODEL_FAILED"}
+                  ]
+            }
+        }
+核心逻辑：
+    接收Agent传入的task_id、最终状态、子任务结果列表和调用链
+    根据final_status决定task_status的枚举值
+    成功/部分成功时，将results数组放入data，部分成功时只放入成功的那部分结果
+    失败时，生成用户可读的错误提示信息，不暴露内部错误码
+    同时生成日志格式的JSON（包含call_chain和error_summary），返回前端JSON和日志JSON两份
+    返回一个包含 frontend_response 和 log_record 的数据结构给Agent。
 
 
