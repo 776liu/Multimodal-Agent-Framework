@@ -1,4 +1,5 @@
 from src.core.models import ModelInfo
+from src.adapters.config import load_model_config
 
 class Router:
     """路由器Router，根据能力匹配合适的模型"""
