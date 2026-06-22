@@ -128,7 +128,7 @@
 --------------------------------------------------------------
 模块名：TaskRouter
 职责：意图解析 + 任务拆解 + 生成执行计划
-输入：ueser_input:string
+输入：user_input:string
 
 输出：
     - 成功：
@@ -373,3 +373,335 @@
     返回一个包含 frontend_response 和 log_record 的数据结构给Agent。
 
 
+====================================================
+错误码枚举表：
+
+错误码	                含义	            发生位置	         处理策略	        处理模块
+503	                    服务不可用	    llmClient调用模型时	    切换备选模型	    Router
+401	                    Key错误	        llmClient调用模型时	   切换备选模型     	Router
+TIMEOUT	                调用超时	       llmClient	        切换备选模型        Router
+INTENT_PARSE_FAILED	    意图识别失败	    TaskRouter	    返回失败,提示更换提示词  Agent
+NO_AVAILABLE_MODEL	    无可用模型	        Router	          报错提示无可用模型    Agent
+ALL_MODELS_EXHAUSTED	所有模型耗尽	 llmClient           任务失败，返回用户提示	 Agent
+
+========================================================
+配置错误的预防策略。:
+
+措施一：环境隔离的配置文件
+LLMClient 需要 endpoint 和 api_key，这些不能硬编码在代码里。
+使用单独的配置文件，并按环境区分：config/dev.yaml、config/prod.yaml。
+Agent 启动时根据环境变量 ENV 加载对应文件。这样测试环境的 Key 和地址永远不会污染生产，反过来也一样。
+
+措施二：启动时的配置校验
+Agent 启动后、进入 READY 状态之前，做一个 health_check 
+步骤：遍历模型注册表中所有模型，用最轻量的请求（比如空查询）验证 endpoint 可达、api_key 有效。
+校验失败的模型标记为 unavailable，记入日志但不阻断启动。
+=
+
+===================================================验证用例
+模块名：Router
+验证用例1（成功）：
+    - 输入：capability_required="text-generation", failed_models=[]
+    - 预期输出：返回已注册的text-generation模型中优先级最高的那个（model_name, endpoint, api_key）
+
+验证用例2（失败）：
+    - 输入：capability_required="text-generation", failed_models=["model-x", "model-y"]（假设只有x和y有该能力）
+    - 预期输出：{"error": "NO_AVAILABLE_MODEL"}
+
+-----------------------------------------------------------
+模块名：Agent
+验证用例 1（成功路径——单步任务直接成功）
+
+    - 前置条件：系统处于 READY 状态，所有模块正常工作。
+    - 输入：user_input = "单一任务"
+    - 模拟内部过程：
+        TaskRouter 返回一个单步子任务计划。
+        Router 返回 model-x 的地址。
+        LLMClient 返回成功
+    - 预期输出：Agent 调用 Builder，Builder 返回统一成功 JSON。Agent 内部状态最终为 SUCCESS。
+
+验证用例 2（降级路径——CALLING 失败但有备选模型）
+    - 前置条件：系统注册了主模型 X 和备用模型 Y。本用例验证 Agent 能否正确触发 FALLBACK 并最终成功。
+    - 输入：user_input = "单一任务"
+    - 模拟内部过程：
+        TaskRouter 返回单步子任务。
+        第一次调 Router，Router 返回 X 的地址。
+        第一次调 LLMClient，LLMClient 返回失败，错误码 503。
+        Agent 判断有备选，将 X 加入失败列表，再次调用 Router。
+        Router 返回 Y 的地址。
+        第二次调 LLMClient，LLMClient 返回成功。
+    - 预期输出：
+        Agent 内部状态流转经过了 CALLING -> (失败) -> ROUTING -> CALLING -> SUCCESS。
+        Agent 最终返回成功响应，用户无感知。
+
+验证用例 3（失败路径——CALLING 失败且无备选模型）
+    - 前置条件：系统只注册了主模型 X，无备用模型，或所有模型都已耗尽。
+    - 输入：user_input = 单一任务
+    - 模拟内部过程：
+        TaskRouter 返回单步子任务。
+        第一次调 Router，Router 返回 X 的地址。
+        第一次调 LLMClient，LLMClient 返回失败，错误码 503。
+        Agent 判断无备选模型（将 X 加入失败列表后再次调 Router，Router 返回 NO_AVAILABLE_MODEL）。
+    - 预期输出：
+        Agent 内部状态从 CALLING 直接转入 FAILED。
+        Agent 最终返回失败响应，包含用户提示“服务暂时不可用”。
+
+验证用例 4（PARTIAL_SUCCESS——多步任务第一步成功、第二步耗尽）
+    - 前置条件：系统注册了生图模型（X/Y）和描述模型（A/B）。本用例验证多步任务的部分成功逻辑。
+    - 输入：user_input = "生成未来城市图片并描述"
+    - 模拟内部过程：
+        TaskRouter 返回两步任务计划。
+        执行第一步：Router 返回 X，LLMClient 成功返回图片。
+        执行第二步：Router 返回 A，LLMClient 失败（503）。Agent 触发 FALLBACK，Router 返回 B，LLMClient 再次失败。
+        Agent 判断第二步所有模型耗尽，且存在已成功的第一步。
+    - 预期输出：
+        Agent 内部状态进入 PARTIAL_SUCCESS。
+        最终返回的部分成功响应里，data.results 只包含图片结果，不包含文本描述。
+
+--------------------------------------------
+模块名：TaskRouter
+验证用例 1（成功）：
+    - 输入：user_input:string
+    - 预期输出：{
+        "intent": "multi_step_multimodal",
+        "subtasks": [
+            {"step": 1, "capability": "image-generation", "prompt": "string"},
+            {"step": 2, "capability": "text-generation", "prompt": "string"}
+        ]
+    }
+
+验证用例2（失败）：
+    - 输入：user_input：string
+    - 预期输出：{"error": "INTENT_PARSE_FAILED"}
+
+-----------------------------------------------------
+模块名：llmClient
+验证用例 1（成功）：
+  - 输入：{
+        "model_name": "model-X",
+        "endpoint": "http://...",
+        "api_key": "...",
+        "prompt": "string",
+        "output_type": "image"
+    }
+  - 预期输出：{
+            "status": "SUCCESS",
+            "data": {
+                "type": "image",
+                "url": "/data/outputs/img_001.png"
+            }
+        }
+
+验证用例2（失败）：
+    - 输入：{
+        "model_name": "model-x",
+        "endpoint": "http://...",
+        "api_key": "...",
+        "prompt": "string",
+        "output_type": "image"
+    }
+    - 预期输出：{
+            "status": "FAILED",
+            "error_code": 503,
+            "model_name": "model-x"
+        }
+
+
+------------------------------------------------------
+模块名：Builder
+验证用例 1（成功,final_status为SUCCESS）：：
+  - 输入：{
+        "task_id": "uuid-xxxx",
+        "final_status": "SUCCESS",
+        "results": [
+            {"type": "image", "url": "/data/outputs/img_001.png"},
+            {"type": "text", "content": "这是一张未来城市的图片..."}
+        ],
+        "call_chain": [
+            {"model_name": "model-x", "capability": "image-generation", "status": "SUCCESS", "attempted_at": "..."},
+            {"model_name": "model-A", "capability": "text-generation", "status": "SUCCESS", "attempted_at": "..."}
+        ]
+    }
+  - 预期输出：{
+        "frontend_response":{
+            "task_id": "uuid-xxxx",
+            "task_status": "FALLBACK_SUCCESS",
+            "system_status": "READY",
+            "data": {
+                "results": [
+                    {"type": "image", "url": "/data/outputs/img_001.png"},
+                    {"type": "text", "content": "这是一张未来城市的图片..."}
+                ]
+            }
+        },
+        "log_record":{
+            "task_id":"uuid-xxxx",
+            "timestamp":"(保存时间戳)",
+            "task_status":"FALLBACK_SUCCESS",//若只有部分任务步骤返回成功则为PARTIAL_SUCCESS
+            "system_status":"READY",
+            "call_chain":[
+                {
+                    "model_name":"model-x",
+                    "capability":"image-generation",
+                    "status"::"FAILED",
+                    "error_code":xxx,
+                    "attempted_at":"(保存时间戳)"
+                },//若第一个任务步骤的大模型成功则为SCUCCESS，且不走下一步调用链
+                {
+                    "model_name":"model-y",
+                    "capability":"image-generation",
+                    "status"::"SUCCESS",
+                    "attempted_at":"(保存时间戳)"
+                },
+                {
+                    "model_name":"model-A",
+                    "capability":"text-generation",
+                    "status"::"FAILED",
+                    "error_code":xxx,
+                    "attempted_at":"(保存时间戳)"
+                },//若第二个任务步骤的大模型成功则为SCUCCESS，不走下一步调用链
+                {
+                    "model_name":"model-B",
+                    "capability":"text-generation",
+                    "status"::"SUCCESS",
+                    "attempted_at":"(保存时间戳)"
+                }
+            ], //模型降级路线
+            "error_summary": [
+                {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+                {"step": 2, "type": "PRIMARY_MODEL_FAILED"}
+            ]
+        }
+    }
+
+验证用例 2（成功,final_status为PARTIAL_SUCCESS）：：
+  - 输入：{
+        "task_id": "uuid-xxxx",
+        "final_status": "PARTIAL_SUCCESS",
+        "results": [
+            {"type": "image", "url": "/data/outputs/img_001.png"},
+            {"type": "text", "content": "这是一张未来城市的图片..."}
+        ],
+        "call_chain": [
+            {"model_name": "model-x", "capability": "image-generation", "status": "SUCCESS", "attempted_at": "..."},
+            {"model_name": "model-A", "capability": "text-generation", "status": "SUCCESS", "attempted_at": "..."}
+        ]
+    }
+    - 预期输出：{
+            "frontend_response":{
+                "task_id": "uuid-xxxx",
+                "task_status": "PARTIAL_SUCCESS",
+                "system_status": "READY",
+                "data": {
+                        "results": [
+                            {"type": "image", "url": "/data/outputs/img_001.png"},
+                            {"type": "text", "content": "这是一张未来城市的图片..."}
+                        ]
+                    }
+            },
+            "log_record":{
+                    "task_id":"uuid-xxxx",
+                    "timestamp":"(保存时间戳)"
+                    "task_status":"PARTIAL_SUCCESS",
+                    "system_status":"READY",
+                    "call_chain":[
+                      {
+                          "model_name":"model-x",
+                          "capability":"image-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx,
+                          "attempted_at":"(保存时间戳)"
+                      },//若第一个任务步骤的大模型成功则为SCUCCESS，则不走下一步调用链
+                      {
+                          "model_name":"model-y",
+                          "capability":"image-generation",
+                          "status"::"SUCCESS",
+                          "attempted_at":"(保存时间戳)"
+                      },
+                      {
+                          "model_name":"model-A",
+                          "capability":"text-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx,
+                          "attempted_at":"(保存时间戳)"
+                      },
+                      {
+                          "model_name":"model-B",
+                          "capability":"text-generation",
+                          "status"::"FAILED",
+                          "error_code":xxx
+                          "attempted_at":"(保存时间戳)"
+                      }
+                  ], //模型降级路线
+                  "error_summary": [
+                      {"step": 1, "type": "PRIMARY_MODEL_FAILED"},
+                      {"step": 2, "type": "ALL_MODEL_FAILED"}
+                  ]
+            }
+        }
+
+验证用例3（失败）：
+    - 输入：
+    {
+        "task_id": "uuid-xxxx",
+        "final_status": "FAILED",
+        "results": [
+            {"type": "image", "url": "/data/outputs/img_001.png"},
+            {"type": "text", "content": "这是一张未来城市的图片..."}
+        ],
+        "call_chain": [
+            {"model_name": "model-x", "capability": "image-generation", "status": "SUCCESS", "attempted_at": "..."},
+            {"model_name": "model-A", "capability": "text-generation", "status": "SUCCESS", "attempted_at": "..."}
+        ]
+    }
+    - 预期输出：{
+                "frontend_response":{
+                "task_id": "uuid-xxxx",
+                "task_status": "FAILED",
+                "system_status": "READY",
+                "data": {
+                    "type": "text",
+                    "message": "服务暂时不可用，请稍后重试"
+                }
+            },
+            "log_record":{
+                "task_id":"uuid-xxxx",
+                "timestamp":"（保存时间戳）",
+                "task_status":"FAILED",
+                "system_status":"READY",
+                "call_chain":[
+                    {
+                        "model_name":"model-X",
+                        "capability":"image-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-Y",
+                        "capability":"image-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-A",
+                        "capability":"text-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                    {
+                        "model_name":"model-B",
+                        "capability":"text-generation",
+                        "status":"FAILED",
+                        "error_code":xxx,
+                        "attempted_at":""
+                    },
+                ],
+                "error_summary": [
+                      {"step": 1, "type": "ALL_MODEL_FAILED"},
+                      {"step": 2, "type": "ALL_MODEL_FAILED"}
+                  ]
+            }
+        }
