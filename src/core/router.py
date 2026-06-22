@@ -5,6 +5,17 @@ class Router:
     """路由器Router，根据能力匹配合适的模型"""
     def __init__(self):
         self.models = load_model_config()  # 从配置文件加载模型信息
+
+    def list_models(self) -> list[dict]:
+        """返回所有注册模型的基本信息列表"""
+        return [
+            {
+                "registered_name": m.registered_name,
+                "model_name": m.model_name,
+                "capability": m.capability
+            }
+            for m in self.models
+        ]
         
     def get_model(self, capability_required: str, failed_models: list = None) -> dict:
         """
@@ -34,3 +45,11 @@ class Router:
                 }
         
         return {"error": "NO_AVAILABLE_MODEL"}
+    
+    # 临时方案：在 router.py 里加一个脱敏函数
+    def _mask_key(key: str) -> str:
+        if len(key) > 10:
+            return key[:6] + "****" + key[-4:]
+        return "****"
+    
+    # 在 get_model 返回前对 api_key 脱敏（仅用于调试输出，实际给 LLMClient 的是未脱敏的原始 Key）
