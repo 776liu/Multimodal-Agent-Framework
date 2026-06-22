@@ -4,6 +4,7 @@ from typing import List,Dict, Optional, Any
 @dataclass
 class ModelInfo:
     """模型注册信息，对应 Router 的输出"""
+    registered_name: str
     model_name: str
     endpoint: str
     api_key: str
