@@ -2,6 +2,7 @@ from src.core.models import LLMResponse, TaskResult, CallChainEntry, BuilderInpu
 from src.core.task_router import TaskRouter
 from src.core.router import Router
 from src.core.llm_client import LLMClient
+from src.core.builder import Builder
 import time
 import uuid
 
@@ -11,11 +12,11 @@ class Agent:
     负责任务状态机
     """
 
-    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient):
+    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient, builder: Builder):
         self.task_router = task_router
         self.router = router
         self.llm_client = llmclient
-        self.builder = None
+        self.builder = builder
 
     def run(self, user_input: str) ->dict:
         """
@@ -94,16 +95,14 @@ class Agent:
 
     def _build_response(self,task_id: str,final_status: str,results: list,call_chain: list) ->dict:
         """拼装response"""
-        if self.builder:
-            builder_input = BuilderInput(
-                task_id = task_id,
-                final_status = final_status,
-                results = results,
-                call_chain = call_chain
-            )
-            return self.builder.build(builder_input)
-        else:
-             return self._build_response(task_id, "FAILED", results, call_chain)
+        builder_input = BuilderInput(
+            task_id = task_id,
+            final_status = final_status,
+            results = results,
+            call_chain = call_chain
+        )
+        return self.builder.build(builder_input)
+    
             
 
 

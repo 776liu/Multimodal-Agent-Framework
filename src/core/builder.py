@@ -5,7 +5,7 @@ class Builder:
 
     def __init__(self):
         pass
-    
+
     def build(self, input: BuilderInput) -> dict:
         """拼装前端响应和后端日志"""
 
@@ -35,7 +35,7 @@ class Builder:
 
         log = {
             "task_id" : input.task_id,
-            "timestamp" : str(time.tiem()),
+            "timestamp" : str(time.time()),
             "task_status" : input.final_status,
             "system_status" : "READY",
             "call_chain" :[
