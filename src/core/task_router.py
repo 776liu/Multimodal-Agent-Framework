@@ -2,6 +2,7 @@ import json
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.models import ExecutionPlan, Subtask
+import uuid
 
 SYSTEM_PROMPT = """你是一个任务拆解专家。你的职责是分析用户输入，判断任务意图，并将复杂任务拆解为有序的子任务列表。
 
