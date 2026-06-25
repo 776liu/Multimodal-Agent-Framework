@@ -4,6 +4,7 @@ from src.core.llm_client import LLMClient
 from src.core.task_router import TaskRouter
 from src.core.builder import Builder
 from src.core.agent import Agent
+from src.adapters.config import load_model_config
 
 @pytest.fixture(scope="module")
 def agent():
@@ -55,6 +56,45 @@ def test_agent_fallback(agent):
     if log["task_status"] == "FAILED":
         assert len(log["error_summary"]) > 0
 
+
+def test_agent_fallback_success():
+    """覆盖容错链路中模型降级"""
+    test_models = load_model_config("config/model.test.yaml")
+
+    # 规划用 Router（只含可达模型，确保 TaskRouter 不因 key 问题挂掉）
+    planning_models = [m for m in test_models if m.registered_name == "task-router-model"]
+    planning_router = Router(models=planning_models)
+
+    # 执行用 Router（含不可达首选 + 可达备选，验证降级逻辑）
+    exec_models = [m for m in test_models if m.registered_name != "task-router-model"]
+    exec_router = Router(models=exec_models)
+
+    builder = Builder()
+    llm_client = LLMClient()
+    task_router = TaskRouter(planning_router, llm_client)
+    agent = Agent(task_router, exec_router, llm_client, builder)
+
+    results = agent.run("翻译:Hello World")
+    frontend = results["frontend_response"]
+    log = results["log_record"]
+
+    assert frontend["task_status"] == "SUCCESS"
+
+    status = [c["status"]for c in log["call_chain"]]
+    assert "FAILED" in status
+    assert "SUCCESS" in status
+
+    assert status[0] == "FAILED"
+    assert status[-1] == "SUCCESS"
+
+    assert len(log["error_summary"]) == 1
+    assert log["error_summary"][0]["model_name"] == "qwen3.7-plus"
+
+    assert len(frontend["data"]["results"]) == 1
+    assert frontend["data"]["results"][0]["type"] == "text"
+    assert len(frontend["data"]["results"][0]["content"]) > 0
+
+    assert frontend["system_status"] == "READY"
 
 if __name__ == "__main__":
     pytest.main([__file__,"-v"])

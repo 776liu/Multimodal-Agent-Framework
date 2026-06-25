@@ -81,7 +81,7 @@ class Agent:
                         error_code = response.error_code,
                         attempted_at = attempted_at
                     ))          
-                    failed_models.append(model_info["model_name"])
+                    failed_models.append(model_info["registered_name"])
 
             if not success :
                 if results:

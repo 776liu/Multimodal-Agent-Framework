@@ -3,9 +3,10 @@ from pathlib import Path
 from src.core.models import ModelInfo
 
 
-def _load_config() -> dict:
+def _load_config(config_path: str = None) -> dict:
     """加载模型配置文件，返回原始字典"""
-    config_path = Path(__file__).parent.parent.parent / "config" / "model.yaml"
+    if config_path is None:
+        config_path = Path(__file__).parent.parent.parent / "config" / "model.yaml"
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -15,9 +16,9 @@ def _load_config() -> dict:
     except yaml.YAMLError as e:
         raise ValueError(f"模型配置文件格式错误: {e}")
 
-def load_model_config() -> list[ModelInfo]:
+def load_model_config(config_path: str = None) -> list[ModelInfo]:
     """从 YAML 配置文件加载模型注册信息"""
-    config = _load_config()
+    config = _load_config(config_path) if config_path else _load_config()
 
     models = []
     for item in config["models"]:

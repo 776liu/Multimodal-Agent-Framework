@@ -20,8 +20,7 @@ class LLMClient:
         输出: LLMResponse 对象
         """
         if output_type == "text":
-            # 兼容模式：URL 拼 /chat/completions，payload 无 input 包装
-            url = endpoint + "/chat/completions"
+            url = endpoint
             payload = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}]

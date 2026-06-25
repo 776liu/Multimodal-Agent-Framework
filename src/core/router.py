@@ -2,10 +2,9 @@ from src.core.models import ModelInfo
 from src.adapters.config import load_model_config
 
 class Router:
-    """路由器Router，根据能力匹配合适的模型"""
-    def __init__(self):
-        self.models = load_model_config()  # 从配置文件加载模型信息
-
+    """路由器Router,根据能力匹配合适的模型"""
+    def __init__(self, models: list[ModelInfo] = None):
+        self.models = models if models is not None else load_model_config()
     def list_models(self) -> list[dict]:
         """返回所有注册模型的基本信息列表"""
         return [
@@ -39,6 +38,7 @@ class Router:
         if available:
             model = available[0]  
             return {
+                "registered_name": model.registered_name,
                 "model_name": model.model_name,
                 "endpoint": model.endpoint,
                 "api_key": model.api_key

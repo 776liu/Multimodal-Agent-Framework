@@ -1,6 +1,6 @@
 models:
   - model_name: "task-router-model"
-    endpoint: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     api_key: "sk-xxxxxxxxxxxx"
     capability: "text-generation"
 
