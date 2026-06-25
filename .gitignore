@@ -2,3 +2,4 @@ config/model.yaml
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
