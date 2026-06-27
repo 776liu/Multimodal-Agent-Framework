@@ -31,7 +31,7 @@
     qwen-max       text-generation      qwen3.7-max-2026-06-08  文字输入生成文字（9.8过期）
     qwen-image     image-generation     qwen-image-2.0-pro      文字图片生成图片（7.23过期）
     wan2.7         image-generation     wan2.7-image-pro        文字图片生成图片（7.1过期）
-
+    qwen3.5-plus   text-generation      qwen3.5-plus-2026-04-20 文字图片生成文字（7.23）
 
 ==================================================
 ==================================================

@@ -16,7 +16,11 @@ SYSTEM_PROMPT = """你是一个任务拆解专家。你的职责是分析用户�
 {
     "intent": "single_text",
     "subtasks": [
-        {"step": 1, "capability": "text-generation", "prompt": "子任务的具体提示词"}
+        {"step": 1, "capability": "...", 
+        "prompt": "...", 
+        "image_url": "...", # 可选，需要图片输入时填写
+        "reference_step": 2 # 可选，引用前面步骤的输出时填写
+        }
     ]
 }
 
@@ -28,7 +32,13 @@ SYSTEM_PROMPT = """你是一个任务拆解专家。你的职责是分析用户�
 输出: {"intent": "single_multimodal", "subtasks": [{"step": 1, "capability": "image-generation", "prompt": "未来城市的图片"}]}
 
 用户输入: "生成一张未来城市的图片，并写一段描述"
-输出: {"intent": "multi_step_multimodal", "subtasks": [{"step": 1, "capability": "image-generation", "prompt": "未来城市的图片"}, {"step": 2, "capability": "text-generation", "prompt": "描述这张未来城市的图片"}]}
+输出: 
+    {
+    "intent": "multi_step_multimodal",
+    "subtasks": [
+    {step": 1, "capability": "image-generation", "prompt": "未来城市的图片"},
+    {"step": 2, "capability": "text-generation", "prompt": "描述这张图片", "reference_step": 1}
+    ]}
 
 现在，请分析以下用户输入："""
 

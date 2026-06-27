@@ -11,7 +11,8 @@ class LLMClient:
         endpoint: str,
         api_key: str,
         prompt: str,
-        output_type: str
+        output_type: str,
+        image_url: str = ""
     ) -> LLMResponse:
         """
         调用大模型 API，返回标准化响应。
@@ -21,10 +22,19 @@ class LLMClient:
         """
         if output_type == "text":
             url = endpoint
-            payload = {
-                "model": model_name,
-                "messages": [{"role": "user", "content": prompt}]
-            }
+            if image_url :
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "text","text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]}]
+                }
+            else:
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
@@ -33,21 +43,39 @@ class LLMClient:
         elif output_type == "image":
             # 原生 API 同步模式：payload 有 input 包装，timeout 拉大
             url = endpoint
-            payload = {
-                "model": model_name,
-                "input": {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [{"text": prompt}]
-                        }
-                    ]
-                },
-                "parameters": {
-                    "n": 1,
-                    "watermark": False
+            if image_url:
+                payload = {"model": model_name,
+                    "input": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": prompt},
+                                            {"type": "image_url", "image_url": {"url": image_url}}
+                                        ]
+                            }
+                        ]
+                    },
+                    "parameters": {
+                        "n": 1,
+                        "watermark": False
+                    }
                 }
-            }
+            else:
+                payload = {
+                    "model": model_name,
+                    "input": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [{"text": prompt}]
+                            }
+                        ]
+                    },
+                    "parameters": {
+                        "n": 1,
+                        "watermark": False
+                    }
+                }
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"

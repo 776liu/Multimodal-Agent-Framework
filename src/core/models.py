@@ -16,6 +16,8 @@ class Subtask:
     step: int
     capability: str
     prompt: str
+    image_url: str = ""
+    reference_step: Optional[int] = None
 
 @dataclass
 class ExecutionPlan:

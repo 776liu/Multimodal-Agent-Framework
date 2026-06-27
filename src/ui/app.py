@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.task_router import TaskRouter
@@ -44,6 +45,23 @@ st.markdown("""
     .main .block-container {
         padding-top: 2rem;
         max-width: 1200px;
+    }
+
+    /* 图片占位骨架屏 */
+    .image-skeleton {
+        background: linear-gradient(90deg, #E8ECF1 25%, #F0F2F5 50%, #E8ECF1 75%);
+        background-size: 200% 100%;
+        animation: skeleton-shimmer 1.5s ease-in-out infinite;
+        border-radius: 12px;
+        width: 100%;
+        min-height: 280px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    @keyframes skeleton-shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
     }
 
     /* 结果卡片 */
@@ -184,6 +202,10 @@ if "user_input" not in st.session_state:
     st.session_state.user_input = ""
 if "result" not in st.session_state:
     st.session_state.result = None
+if "_should_run" not in st.session_state:
+    st.session_state._should_run = False
+if "_input_to_run" not in st.session_state:
+    st.session_state._input_to_run = ""
 
 # ---------------------------------------------------------------------------
 # 回调函数（在 widget 创建前执行，安全修改 session_state）
@@ -198,11 +220,12 @@ def clear_all():
 
 
 def do_execute():
-    """执行 Agent，结果存入 session_state，清空输入框"""
+    """保存输入并标记待执行，同时清空输入框"""
     text = st.session_state.user_input.strip()
     if text:
-        st.session_state.result = agent.run(text)
+        st.session_state._input_to_run = text
         st.session_state.user_input = ""
+        st.session_state._should_run = True
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +235,6 @@ st.title("自动拆解任务、匹配大模型、返回结果")
 # ---------------------------------------------------------------------------
 # 输入区域
 # ---------------------------------------------------------------------------
-st.markdown('<div class="input-card">', unsafe_allow_html=True)
-
 st.text_area(
     "描述你的需求",
     key="user_input",
@@ -247,7 +268,71 @@ with col_btn1:
 with col_btn2:
     st.button("清空", use_container_width=True, on_click=clear_all)
 
-st.markdown('</div>', unsafe_allow_html=True)
+# ---------------------------------------------------------------------------
+# 执行阶段 — 带实时进度反馈
+# ---------------------------------------------------------------------------
+if st.session_state._should_run:
+    st.session_state._should_run = False
+    text = st.session_state._input_to_run
+    st.session_state._input_to_run = ""
+
+    start_time = time.time()
+    TIMEOUT_SECONDS = 180
+
+    with st.status("分析意图，拆解任务...", expanded=True) as status_widget:
+        progress_bar = st.progress(0, text="准备中...")
+
+        def on_progress(event: dict):
+            stage = event["stage"]
+            if stage == "planning":
+                status_widget.update(label="分析意图，拆解任务...", state="running")
+                progress_bar.progress(0, text="TaskRouter 解析中...")
+            elif stage == "planned":
+                count = event.get("count", 0)
+                status_widget.update(label=f"任务拆解完成，共 {count} 个子任务", state="running")
+                progress_bar.progress(0.05, text=f"已拆解为 {count} 个步骤")
+            elif stage == "routing":
+                step = event["step"]; total = event["total"]
+                pct = 0.05 + 0.85 * (step - 1) / total
+                status_widget.update(label=f"步骤 {step}/{total}: 匹配可用模型...", state="running")
+                progress_bar.progress(pct, text=f"步骤 {step}/{total}: 查询模型注册中心...")
+            elif stage == "calling":
+                step = event["step"]; total = event["total"]
+                model_name = event.get("model", "--")
+                pct = 0.05 + 0.85 * (step - 0.5) / total
+                status_widget.update(label=f"步骤 {step}/{total}: 正在调用 {model_name}...", state="running")
+                progress_bar.progress(pct, text=f"步骤 {step}/{total}: 等待 {model_name} 响应...")
+            elif stage == "subtask_done":
+                step = event["step"]; total = event["total"]
+                model_name = event.get("model", "--")
+                is_ok = event.get("status") == "ok"
+                label = (
+                    f"步骤 {step}/{total}: {model_name} 调用成功"
+                    if is_ok else
+                    f"步骤 {step}/{total}: {model_name} 调用失败 (错误码: {event.get('error_code', '--')})"
+                )
+                pct = 0.05 + 0.85 * step / total
+                status_widget.update(label=label, state="running")
+                progress_bar.progress(pct, text=label)
+
+        result = agent.run(text, on_progress=on_progress)
+        elapsed = time.time() - start_time
+
+        if elapsed > TIMEOUT_SECONDS:
+            status_widget.update(label=f"执行超时 (耗时 {elapsed:.0f}s)", state="error")
+        else:
+            status_widget.update(label=f"执行完成 (耗时 {elapsed:.1f}s)", state="complete")
+        progress_bar.progress(1.0, text="完成")
+
+    # 超时告警
+    log_data = result.get("log_record", {})
+    if any(c.get("error_code") == 408 for c in log_data.get("call_chain", [])):
+        st.warning("部分模型调用超时，已自动切换备选模型")
+    if elapsed > TIMEOUT_SECONDS:
+        st.warning("生成超时，请重试")
+
+    st.session_state.result = result
+    st.rerun()
 
 # ---------------------------------------------------------------------------
 # 无结果时提前结束
@@ -305,7 +390,12 @@ if results:
                 if img_url:
                     st.image(img_url, use_column_width=True)
                 else:
-                    st.warning("图片 URL 为空")
+                    st.markdown(
+                        '<div class="image-skeleton">'
+                        '<span style="color:#B0B8C1;">图片加载中...</span>'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
 
             elif item.get("type") == "text":
                 st.markdown(

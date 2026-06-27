@@ -45,6 +45,8 @@ class Agent:
 
         total = len(plan.subtasks)
         _emit({"stage": "planned", "count": total})
+        step_outputs: dict[int, str] = {}  # step → image_url
+
 
         for i, subtask in enumerate(plan.subtasks):
             capability_required = subtask.capability
@@ -68,6 +70,10 @@ class Agent:
                     "total": total,
                 })
 
+                call_image_url = subtask.image_url or ""
+                if subtask.reference_step and subtask.reference_step in step_outputs:
+                    call_image_url = step_outputs[subtask.reference_step]
+
                 output_type = "text" if capability_required == "text-generation" else "image"
                 response = self.llm_client.call(
                     model_name=model_info["model_name"],
@@ -75,6 +81,7 @@ class Agent:
                     api_key=model_info["api_key"],
                     prompt=prompt,
                     output_type=output_type,
+                    image_url=call_image_url
                 )
 
                 attempted_at = str(time.time())
@@ -86,6 +93,10 @@ class Agent:
                         attempted_at=attempted_at,
                     ))
                     results.append(response.data)
+
+                    if response.data and response.data.type == "image" and response.data.url:
+                        step_outputs[subtask.step] = response.data.url
+
                     success = True
                     _emit({
                         "stage": "subtask_done",
