@@ -470,3 +470,29 @@
 
 
 ==========================================================
+场景4：带会话记忆的多轮对话
+
+前置条件：系统已启动，Memory 模块已初始化
+
+触发事件：用户在对话历史存在的情况下，输入依赖于上下文的指令（如“再翻译成日语”）
+
+预期行为：
+
+Memory 将历史对话和当前输入拼装为完整上下文
+Agent 将完整上下文传递给 TaskRouter
+TaskRouter 根据上下文解析指代关系，生成正确的执行计划
+Agent 执行并返回结果
+本轮对话被写回 Memory
+Memory 模块接口定义
+
+输入：session_id: str, role: str, content: str（add 方法）；session_id: str, current_input: str（build_context 方法）
+
+输出：add 返回 None；build_context 返回拼装后的完整上下文字符串
+
+核心逻辑：
+
+以 session_id 为键存储对话历史
+每轮对话包含 user 和 assistant 两条消息
+超过 max_history 轮时，裁剪最早的消息
+build_context 将历史对话格式化为文本，与当前输入拼接返回
+

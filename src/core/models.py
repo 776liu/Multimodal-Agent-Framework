@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List,Dict, Optional, Any
+from typing import List
 
 @dataclass
 class ModelInfo:
@@ -62,3 +63,17 @@ class BuilderInput:
 class BuilderOutput:
     frontend_response: Dict[str, Any]
     log_record: Dict[str, Any]
+
+@dataclass
+class Messages:
+    """对话中的单条消息"""
+    role: str
+    content: str
+
+@dataclass
+class Conversatoin:
+    """一次完整的多轮对话"""
+    session_id: str
+    messages: List[Messages] = field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""

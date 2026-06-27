@@ -3,6 +3,7 @@ from src.core.task_router import TaskRouter
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.builder import Builder
+from src.core.memory import Memory
 import time
 import uuid
 from typing import Callable, Optional
@@ -11,13 +12,14 @@ from typing import Callable, Optional
 class Agent:
     """负责任务状态机"""
 
-    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient, builder: Builder):
+    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient, builder: Builder, memory: Memory):
         self.task_router = task_router
         self.router = router
         self.llm_client = llmclient
         self.builder = builder
+        self.memory = memory
 
-    def run(self, user_input: str, on_progress: Optional[Callable] = None) -> dict:
+    def run(self, user_input: str, session_id: str, on_progress: Optional[Callable] = None) -> dict:
         """
         READY → PLANNING → ROUTING → CALLING → SUCCESS/PARTIAL_SUCCESS/FAILED
 
@@ -28,6 +30,7 @@ class Agent:
           {"stage": "calling", "model": "qwen-plus", "step": i, "total": N}
           {"stage": "subtask_done", "step": i, "total": N, "status": "ok"|"fail", "model": "..."}
         """
+
         def _emit(event: dict):
             if on_progress:
                 on_progress(event)
@@ -36,9 +39,19 @@ class Agent:
         results: list[TaskResult] = []
         call_chain: list[CallChainEntry] = []
 
+        # 先保存用户消息到记忆
+        if self.memory:
+            self.memory.add(session_id, "user", user_input)
+
+        history = self.memory.get_history(session_id) if self.memory else []
+        if history:
+            full_input = self.memory.build_context(session_id, user_input)
+        else:
+            full_input = user_input
+
         # PLANNING
         _emit({"stage": "planning"})
-        plan = self.task_router.route_task(user_input)
+        plan = self.task_router.route_task(full_input)
 
         if not plan or not plan.subtasks:
             return self._build_response(task_id, "FAILED", results, call_chain)
@@ -125,10 +138,12 @@ class Agent:
 
             if not success:
                 if results:
+                    self.memory.add_assistant_response(session_id, results)
                     return self._build_response(task_id, "PARTIAL_SUCCESS", results, call_chain)
                 else:
                     return self._build_response(task_id, "FAILED", results, call_chain)
 
+        self.memory.add_assistant_response(session_id, results)
         return self._build_response(task_id, "SUCCESS", results, call_chain)
 
     def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list) -> dict:
