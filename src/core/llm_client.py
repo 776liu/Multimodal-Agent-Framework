@@ -15,7 +15,8 @@ class LLMClient:
         image_url: str = ""
     ) -> LLMResponse:
         """
-        调用大模型 API，返回标准化响应。
+        调用大模型 API,返回标准化响应。
+        统一请求格式
 
         输入: model_name, endpoint, api_key, prompt, output_type
         输出: LLMResponse 对象
@@ -50,7 +51,7 @@ class LLMClient:
                             {
                                 "role": "user",
                                 "content": [{"type": "text", "text": prompt},
-                                            {"type": "image_url", "image_url": {"url": image_url}}
+                                            {"image_url": image_url}
                                         ]
                             }
                         ]

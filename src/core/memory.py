@@ -34,7 +34,7 @@ class Memory:
         
         context = "以下是之前的对话记录，请根据上下文理解用户的当前需求：\n"
         for msg in history:
-            role_name = "用户" if msg.role == "user" else "助手"
+            role_name = "user" if msg.role == "user" else "assistant"
             context +=f"[{role_name}]: {msg.content}\n"
         context += f"\n用户的当前需求: {current_input}"
 

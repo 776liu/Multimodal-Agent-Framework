@@ -1,9 +1,11 @@
 import streamlit as st
 import time
+from datetime import datetime
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.task_router import TaskRouter
 from src.core.builder import Builder
+from src.core.memory import Memory
 from src.core.agent import Agent
 
 # ---------------------------------------------------------------------------
@@ -13,7 +15,7 @@ st.set_page_config(
     page_title="多模态 AI Agent",
     page_icon="",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
@@ -190,7 +192,8 @@ def load_agent():
     llm_client = LLMClient()
     task_router = TaskRouter(router, llm_client)
     builder = Builder()
-    return Agent(task_router, router, llm_client, builder)
+    memory = Memory(max_history=10)
+    return Agent(task_router, router, llm_client, builder, memory)
 
 
 agent = load_agent()
@@ -206,6 +209,17 @@ if "_should_run" not in st.session_state:
     st.session_state._should_run = False
 if "_input_to_run" not in st.session_state:
     st.session_state._input_to_run = ""
+if "_last_context" not in st.session_state:
+    st.session_state._last_context = ""
+
+# ---- 多会话管理器 ----
+if "sessions" not in st.session_state:
+    default_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+    st.session_state.sessions = {
+        default_sid: {"created_at": time.time(), "label": "新对话"}
+    }
+if "session_id" not in st.session_state:
+    st.session_state.session_id = next(iter(st.session_state.sessions))
 
 # ---------------------------------------------------------------------------
 # 回调函数（在 widget 创建前执行，安全修改 session_state）
@@ -217,6 +231,7 @@ def fill_prompt(value: str):
 def clear_all():
     st.session_state.user_input = ""
     st.session_state.result = None
+    st.session_state._last_context = ""
 
 
 def do_execute():
@@ -226,6 +241,102 @@ def do_execute():
         st.session_state._input_to_run = text
         st.session_state.user_input = ""
         st.session_state._should_run = True
+
+
+# ---- 会话管理 ----
+def _save_session_state():
+    """把当前页面临时状态存回 sessions 字典"""
+    sid = st.session_state.session_id
+    if sid in st.session_state.sessions:
+        st.session_state.sessions[sid]["result"] = st.session_state.result
+        st.session_state.sessions[sid]["user_input"] = st.session_state.user_input
+        st.session_state.sessions[sid]["_last_context"] = st.session_state._last_context
+
+
+def _restore_session_state(sid: str):
+    """从 sessions 字典恢复页面状态"""
+    meta = st.session_state.sessions.get(sid, {})
+    st.session_state.result = meta.get("result")
+    st.session_state.user_input = meta.get("user_input", "")
+    st.session_state._last_context = meta.get("_last_context", "")
+
+
+def new_session():
+    _save_session_state()
+    sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+    st.session_state.sessions[sid] = {"created_at": time.time(), "label": "新对话"}
+    st.session_state.session_id = sid
+    _restore_session_state(sid)
+
+
+def switch_session(sid: str):
+    if sid == st.session_state.session_id:
+        return
+    _save_session_state()
+    st.session_state.session_id = sid
+    _restore_session_state(sid)
+
+
+def delete_session(sid: str):
+    agent.memory.sessions.pop(sid, None)
+    st.session_state.sessions.pop(sid, None)
+    if sid == st.session_state.session_id:
+        if st.session_state.sessions:
+            new_sid = next(iter(st.session_state.sessions))
+            st.session_state.session_id = new_sid
+            _restore_session_state(new_sid)
+        else:
+            # 最后一个会话被删，自动建一个新的
+            new_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+            st.session_state.sessions[new_sid] = {"created_at": time.time(), "label": "新对话"}
+            st.session_state.session_id = new_sid
+            _restore_session_state(new_sid)
+
+
+
+# ---------------------------------------------------------------------------
+# 侧边栏：partner_01 风格 — 会话列表 + 记忆 + 调试
+# ---------------------------------------------------------------------------
+session_id = st.session_state.session_id
+
+with st.sidebar:
+    st.subheader("会话信息")
+
+    st.button("新建会话", width="stretch", icon=":material/add:", on_click=new_session)
+
+    st.text("会话列表")
+    sessions = st.session_state.sessions
+    for sid in sorted(sessions.keys(), reverse=True):
+        is_active = sid == session_id
+        meta = sessions[sid]
+        label = meta.get("label", "新对话")[:28]
+
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.button(
+                label, key=f"sw_{sid}", width="stretch",
+                type="primary" if is_active else "secondary",
+                on_click=switch_session, args=(sid,),
+            )
+        with col2:
+            st.button("", key=f"del_{sid}", width="stretch", icon=":material/delete:",
+                      on_click=delete_session, args=(sid,))
+
+    st.divider()
+
+    # 当前会话记忆
+    history = agent.memory.get_history(session_id)
+    if history:
+        st.caption(f"已记忆 {len(history)} 条消息")
+    else:
+        st.caption("暂无历史对话")
+
+    with st.expander("调试面板", expanded=False):
+        if st.session_state.get("_last_context"):
+            st.caption("**注入的完整上下文:**")
+            st.code(st.session_state._last_context, language="text")
+        else:
+            st.caption("尚无上下文（首次对话或无历史）")
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +426,14 @@ if st.session_state._should_run:
                 status_widget.update(label=label, state="running")
                 progress_bar.progress(pct, text=label)
 
-        result = agent.run(text, on_progress=on_progress)
+        # 保存注入的完整上下文供调试面板查看
+        history_before = agent.memory.get_history(session_id)
+        if history_before:
+            st.session_state._last_context = agent.memory.build_context(session_id, text)
+        else:
+            st.session_state._last_context = text
+
+        result = agent.run(text, session_id, on_progress=on_progress)
         elapsed = time.time() - start_time
 
         if elapsed > TIMEOUT_SECONDS:
@@ -332,6 +450,13 @@ if st.session_state._should_run:
         st.warning("生成超时，请重试")
 
     st.session_state.result = result
+
+    # 首次执行后自动给会话打标签
+    if session_id in st.session_state.sessions:
+        cur_label = st.session_state.sessions[session_id].get("label", "")
+        if cur_label == "新对话":
+            st.session_state.sessions[session_id]["label"] = text[:30]
+
     st.rerun()
 
 # ---------------------------------------------------------------------------
@@ -414,6 +539,10 @@ if results:
                 )
 
             st.markdown('</div>', unsafe_allow_html=True)
+
+# 记忆写入确认
+if task_status in ("SUCCESS", "PARTIAL_SUCCESS"):
+    st.success("本轮对话已写入记忆，后续提问可引用上下文")
 
 # 失败提示
 if task_status == "FAILED" and data.get("message"):
