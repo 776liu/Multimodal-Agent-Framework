@@ -1,5 +1,7 @@
 from src.core.models import BuilderInput, BuilderOutput
 import time
+import json
+import os
 
 class Builder:
 
@@ -57,6 +59,10 @@ class Builder:
                 for c in input.call_chain if c.status == "FAILED"
             ]
         }
+
+        os.makedirs("logs", exist_ok=True)
+        with open(f"logs/{input.task_id}.json", "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
 
         return {
             "frontend_response" : frontend,
