@@ -58,6 +58,7 @@ class BuilderInput:
     final_status: str
     results: List[TaskResult] = field(default_factory=list)
     call_chain: List[CallChainEntry] = field(default_factory=list)
+    session_id: str
 
 @dataclass
 class BuilderOutput:

@@ -5,8 +5,8 @@ import os
 
 class Builder:
 
-    def __init__(self):
-        pass
+    def __init__(self, storage = None):
+        self.storage = storage
 
     def build(self, input: BuilderInput) -> dict:
         """拼装前端响应和后端日志"""
@@ -63,6 +63,15 @@ class Builder:
         os.makedirs("logs", exist_ok=True)
         with open(f"logs/{input.task_id}.json", "w", encoding="utf-8") as f:
             json.dump(log, f, ensure_ascii=False, indent=2)
+
+        if self.storage:
+            self.storage.save_task_log(
+                task_id = input.task_id,
+                session_id = getattr(input, "session_id", "default"),
+                frontend = frontend,
+                log = log
+            )
+        
 
         return {
             "frontend_response" : frontend,

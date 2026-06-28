@@ -1,11 +1,13 @@
 import streamlit as st
 import time
+import json
 from datetime import datetime
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.task_router import TaskRouter
 from src.core.builder import Builder
 from src.core.memory import Memory
+from src.core.storage import Storage
 from src.core.agent import Agent
 
 # ---------------------------------------------------------------------------
@@ -193,10 +195,12 @@ def load_agent():
     task_router = TaskRouter(router, llm_client)
     builder = Builder()
     memory = Memory(max_history=10)
-    return Agent(task_router, router, llm_client, builder, memory)
+    storage = Storage(db_path="data/agent.db")
+    agent = Agent(task_router, router, llm_client, builder, memory)
+    return agent, storage
 
 
-agent = load_agent()
+agent, storage = load_agent()
 
 # ---------------------------------------------------------------------------
 # 初始化 session state
@@ -212,12 +216,31 @@ if "_input_to_run" not in st.session_state:
 if "_last_context" not in st.session_state:
     st.session_state._last_context = ""
 
-# ---- 多会话管理器 ----
+# ---- 多会话管理器：优先从持久层重建 ----
 if "sessions" not in st.session_state:
-    default_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-    st.session_state.sessions = {
-        default_sid: {"created_at": time.time(), "label": "新对话"}
-    }
+    db_sessions = storage.list_sessions()
+    if db_sessions:
+        restored = {}
+        for sid in db_sessions:
+            restored[sid] = {
+                "created_at": time.time(),
+                "label": storage.get_first_message(sid)[:30],
+            }
+            # 只在 Memory 无数据时才从 Storage 恢复（避免 @cache_resource 残留导致重复）
+            if sid not in agent.memory.sessions:
+                for m in storage.get_messages(sid):
+                    agent.memory.add(sid, m["role"], m["content"])
+        st.session_state.sessions = restored
+        st.session_state.session_id = db_sessions[0]
+        builder_input = storage.get_last_task_input(db_sessions[0])
+        st.session_state.result = agent.builder.build(builder_input) if builder_input else None
+    else:
+        default_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+        st.session_state.sessions = {
+            default_sid: {"created_at": time.time(), "label": "新对话"}
+        }
+        st.session_state.session_id = default_sid
+
 if "session_id" not in st.session_state:
     st.session_state.session_id = next(iter(st.session_state.sessions))
 
@@ -450,6 +473,19 @@ if st.session_state._should_run:
         st.warning("生成超时，请重试")
 
     st.session_state.result = result
+
+    # ---- 写入持久层 Storage ----
+    frontend_resp = result.get("frontend_response", {})
+    results_raw = frontend_resp.get("data", {}).get("results", [])
+    chain_raw = log_data.get("call_chain", [])
+
+    storage.save_message(session_id, "user", text)
+    storage.save_message(session_id, "assistant", json.dumps(frontend_resp.get("data", {}), ensure_ascii=False))
+    storage.save_task_log(
+        frontend_resp.get("task_id", ""), session_id,
+        frontend_resp, log_data,
+        results=results_raw, call_chain=chain_raw,
+    )
 
     # 首次执行后自动给会话打标签
     if session_id in st.session_state.sessions:

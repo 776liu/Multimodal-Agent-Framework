@@ -146,12 +146,14 @@ class Agent:
         self.memory.add_assistant_response(session_id, results)
         return self._build_response(task_id, "SUCCESS", results, call_chain)
 
-    def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list) -> dict:
+    def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list, session_id="default") -> dict:
         """拼装 response"""
-        builder_input = BuilderInput(
-            task_id=task_id,
-            final_status=final_status,
-            results=results,
-            call_chain=call_chain,
-        )
-        return self.builder.build(builder_input)
+        if self.builder:
+            builder_input = BuilderInput(
+                task_id=task_id,
+                final_status=final_status,
+                results=results,
+                call_chain=call_chain,
+                session_id=session_id
+            )
+            return self.builder.build(builder_input)
