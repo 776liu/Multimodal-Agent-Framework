@@ -16,7 +16,10 @@
             Agent (收集结果, 遇错则调Router再要地址)
                 |
                 v (所有原始结果)
-            Builder (拼装JSON)
+            Builder (拼装JSON) -> Storage（存入SQLite持久化）
+                |
+                V
+             Memory（存入会话记忆）
                 |
                 v (统一响应)
 [前端] <--  Agent
@@ -382,6 +385,25 @@
     同时生成日志格式的JSON（包含call_chain和error_summary），返回前端JSON和日志JSON两份
     返回一个包含 frontend_response 和 log_record 的数据结构给Agent。
 
+----------------------------------------------------------
+模块名：Storage
+职责：SQLite 持久化存储，统一管理对话历史与任务日志
+
+数据表：
+  - messages: 对话消息（session_id, role, content, created_at）
+  - task_logs: 任务日志（task_id, session_id, task_status, frontend_json, log_json, created_at）
+
+输入/输出：
+  - save_message(session_id, role, content) → None
+  - get_messages(session_id, limit) → List[dict]
+  - save_task_log(task_id, session_id, frontend, log) → None
+
+核心逻辑：
+  1. 首次使用时自动建表
+  2. 对话消息按 session_id 存储和查询
+  3. 任务日志按 task_id 唯一存储，重复写入时覆盖
+  4. 日志写入失败时静默处理，不影响主流程
+==============================================================
 
 ====================================================
 错误码枚举表：
@@ -715,3 +737,45 @@ Agent 启动后、进入 READY 状态之前，做一个 health_check
                   ]
             }
         }
+---------------------------------------
+模块名：Storage
+职责：SQLite 持久化存储，统一管理对话历史与任务日志
+
+验证用例 1（成功——保存并读取对话消息）
+
+    输入：
+
+    调用 save_message(session_id="test-001", role="user", content="Hello")
+
+    调用 save_message(session_id="test-001", role="assistant", content="你好")
+
+    调用 get_messages(session_id="test-001", limit=10)
+
+    预期输出：返回包含两条消息的列表，第一条 role 为 "user"、content 为 "Hello"，第二条 role 为 "assistant"、content 为 "你好"
+
+验证用例 2（成功——保存任务日志）
+
+    输入：
+    
+    调用 save_task_log(task_id="task-001", session_id="test-001", frontend={...}, log={...})
+    
+    用 SQLite 客户端直接查询 SELECT * FROM task_logs WHERE task_id='task-001'
+    
+    预期输出：查询到一条记录，task_id 为 "task-001"，task_status 与传入的 log 中的状态一致，frontend_json 和 log_json 为合法的 JSON 字符串
+
+验证用例 3（成功——数据库文件自动创建）
+
+    前置条件：删除已有的 data/agent.db 文件
+
+    输入：初始化 Storage(db_path="data/agent.db")
+
+    预期输出：data/agent.db 文件被自动创建，且包含 messages 和 task_logs 两张表
+
+验证用例 4（失败——日志写入失败不影响主流程）
+
+    前置条件：使用一个不可写的路径初始化 Storage（如 /root/readonly/agent.db，或无权限的目录）
+
+    输入：调用 save_task_log(...)
+
+    预期输出：方法正常返回，不抛出异常。get_messages() 和 save_message() 同理，各自静默处理错误
+
