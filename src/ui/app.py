@@ -1,6 +1,7 @@
 import streamlit as st
 import time
 import json
+import uuid
 from datetime import datetime
 from src.core.router import Router
 from src.core.llm_client import LLMClient
@@ -9,6 +10,7 @@ from src.core.builder import Builder
 from src.core.memory import Memory
 from src.core.storage import Storage
 from src.core.agent import Agent
+from src.core.models import TaskResult, CallChainEntry
 
 # ---------------------------------------------------------------------------
 # 页面配置
@@ -68,34 +70,24 @@ st.markdown("""
         100% { background-position: -200% 0; }
     }
 
-    /* 结果卡片 */
-    .result-card {
-        background: var(--bg-card);
-        border-radius: var(--radius);
-        padding: 1.5rem;
-        margin: 1rem 0;
-        box-shadow: var(--shadow-sm);
-        border: 1px solid var(--border);
-    }
-    .result-card .result-header {
+    /* 结果标签 */
+    .result-header {
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 1rem;
-        padding-bottom: 0.75rem;
-        border-bottom: 1px solid var(--border);
+        margin-bottom: 0.75rem;
     }
-    .result-card .result-badge {
+    .result-badge {
         font-size: 0.78rem;
         padding: 4px 12px;
         border-radius: 12px;
         font-weight: 600;
     }
-    .result-card .result-badge.text {
+    .result-badge.text {
         background: #E8F4FD;
         color: #0984E3;
     }
-    .result-card .result-badge.image {
+    .result-badge.image {
         background: #FDE8FF;
         color: #A855F7;
     }
@@ -221,25 +213,35 @@ if "sessions" not in st.session_state:
     db_sessions = storage.list_sessions()
     if db_sessions:
         restored = {}
-        for sid in db_sessions:
+        first_sid = None
+        for entry in db_sessions:
+            sid = entry["session_id"]
+            ts_raw = entry["created_at"]
+            if isinstance(ts_raw, str):
+                try:
+                    ts_raw = datetime.fromisoformat(ts_raw).timestamp()
+                except ValueError:
+                    ts_raw = time.time()
             restored[sid] = {
-                "created_at": time.time(),
-                "label": storage.get_first_message(sid)[:30],
+                "created_at": ts_raw,
+                "label": entry["label"],
             }
-            # 只在 Memory 无数据时才从 Storage 恢复（避免 @cache_resource 残留导致重复）
-            if sid not in agent.memory.sessions:
+            if first_sid is None:
+                first_sid = sid
+            if not agent.memory.has_session(sid):
                 for m in storage.get_messages(sid):
                     agent.memory.add(sid, m["role"], m["content"])
         st.session_state.sessions = restored
-        st.session_state.session_id = db_sessions[0]
-        builder_input = storage.get_last_task_input(db_sessions[0])
+        st.session_state.session_id = first_sid
+        builder_input = storage.get_last_task_input(first_sid)
         st.session_state.result = agent.builder.build(builder_input) if builder_input else None
     else:
-        default_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+        sid = uuid.uuid4().hex[:8]
         st.session_state.sessions = {
-            default_sid: {"created_at": time.time(), "label": "新对话"}
+            sid: {"created_at": time.time(), "label": "新对话"}
         }
-        st.session_state.session_id = default_sid
+        st.session_state.session_id = sid
+        storage.save_session(sid)
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = next(iter(st.session_state.sessions))
@@ -286,7 +288,8 @@ def _restore_session_state(sid: str):
 
 def new_session():
     _save_session_state()
-    sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+    sid = uuid.uuid4().hex[:8]
+    storage.save_session(sid)
     st.session_state.sessions[sid] = {"created_at": time.time(), "label": "新对话"}
     st.session_state.session_id = sid
     _restore_session_state(sid)
@@ -301,7 +304,8 @@ def switch_session(sid: str):
 
 
 def delete_session(sid: str):
-    agent.memory.sessions.pop(sid, None)
+    agent.memory.delete_session(sid)
+    storage.delete_session_data(sid)
     st.session_state.sessions.pop(sid, None)
     if sid == st.session_state.session_id:
         if st.session_state.sessions:
@@ -309,8 +313,8 @@ def delete_session(sid: str):
             st.session_state.session_id = new_sid
             _restore_session_state(new_sid)
         else:
-            # 最后一个会话被删，自动建一个新的
-            new_sid = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+            new_sid = uuid.uuid4().hex[:8]
+            storage.save_session(new_sid)
             st.session_state.sessions[new_sid] = {"created_at": time.time(), "label": "新对话"}
             st.session_state.session_id = new_sid
             _restore_session_state(new_sid)
@@ -329,7 +333,12 @@ with st.sidebar:
 
     st.text("会话列表")
     sessions = st.session_state.sessions
-    for sid in sorted(sessions.keys(), reverse=True):
+    sorted_sids = sorted(
+        sessions.keys(),
+        key=lambda s: sessions[s].get("created_at", 0),
+        reverse=True,
+    )
+    for sid in sorted_sids:
         is_active = sid == session_id
         meta = sessions[sid]
         label = meta.get("label", "新对话")[:28]
@@ -476,15 +485,17 @@ if st.session_state._should_run:
 
     # ---- 写入持久层 Storage ----
     frontend_resp = result.get("frontend_response", {})
-    results_raw = frontend_resp.get("data", {}).get("results", [])
-    chain_raw = log_data.get("call_chain", [])
+
+    # dict 列表 → dataclass 对象列表，保证类型安全
+    results_objs = [TaskResult(**r) for r in frontend_resp.get("data", {}).get("results", [])]
+    chain_objs = [CallChainEntry(**c) for c in log_data.get("call_chain", [])]
 
     storage.save_message(session_id, "user", text)
     storage.save_message(session_id, "assistant", json.dumps(frontend_resp.get("data", {}), ensure_ascii=False))
     storage.save_task_log(
         frontend_resp.get("task_id", ""), session_id,
         frontend_resp, log_data,
-        results=results_raw, call_chain=chain_raw,
+        results=results_objs, call_chain=chain_objs,
     )
 
     # 首次执行后自动给会话打标签
@@ -492,6 +503,7 @@ if st.session_state._should_run:
         cur_label = st.session_state.sessions[session_id].get("label", "")
         if cur_label == "新对话":
             st.session_state.sessions[session_id]["label"] = text[:30]
+            storage.save_session(session_id, label=text[:30])
 
     st.rerun()
 
@@ -537,8 +549,6 @@ if results:
     for i, item in enumerate(results):
         col_idx = i % 2
         with cols[col_idx]:
-            st.markdown('<div class="result-card">', unsafe_allow_html=True)
-
             if item.get("type") == "image":
                 st.markdown(
                     '<div class="result-header">'
@@ -549,7 +559,7 @@ if results:
                 )
                 img_url = item.get("url", "")
                 if img_url:
-                    st.image(img_url, use_column_width=True)
+                    st.image(img_url, width="stretch")
                 else:
                     st.markdown(
                         '<div class="image-skeleton">'
@@ -574,8 +584,6 @@ if results:
                     unsafe_allow_html=True,
                 )
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
 # 记忆写入确认
 if task_status in ("SUCCESS", "PARTIAL_SUCCESS"):
     st.success("本轮对话已写入记忆，后续提问可引用上下文")
@@ -583,6 +591,30 @@ if task_status in ("SUCCESS", "PARTIAL_SUCCESS"):
 # 失败提示
 if task_status == "FAILED" and data.get("message"):
     st.info(data["message"])
+
+# ---- 本会话历史记录（用户提问 + AI 回答）----
+all_messages = storage.get_messages(session_id, limit=20)
+if len(all_messages) > 2:  # 当前轮次已有 1 user + 1 assistant
+    st.divider()
+    with st.expander(f"会话历史 ({len(all_messages)} 条)", expanded=False):
+        for msg in all_messages:
+            if msg["role"] == "user":
+                st.caption(f"[You] {msg['content'][:200]}")
+            else:
+                content = msg["content"][:200]
+                # assistant 消息可能是 JSON 摘要，尝试提取纯文本
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict) and "results" in parsed:
+                        for r in parsed["results"]:
+                            if r.get("content"):
+                                st.caption(f"[AI] {r['content'][:120]}")
+                            elif r.get("url"):
+                                st.image(r["url"], width=180)
+                    else:
+                        st.caption(f"[AI] {content}")
+                except (json.JSONDecodeError, TypeError):
+                    st.caption(f"[AI] {content}")
 
 st.divider()
 

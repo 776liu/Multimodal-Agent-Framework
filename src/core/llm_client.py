@@ -45,14 +45,13 @@ class LLMClient:
             # 原生 API 同步模式：payload 有 input 包装，timeout 拉大
             url = endpoint
             if image_url:
+                # 图生图模式：只传参考图，不混用 text
                 payload = {"model": model_name,
                     "input": {
                         "messages": [
                             {
                                 "role": "user",
-                                "content": [{"type": "text", "text": prompt},
-                                            {"image_url": image_url}
-                                        ]
+                                "content": [{"image": image_url}]
                             }
                         ]
                     },

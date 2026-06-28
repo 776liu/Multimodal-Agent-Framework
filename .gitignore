@@ -1,5 +1,7 @@
 config/model.yaml
 config/model.test.yaml
+logs
+data
 __pycache__/
 *.pyc
 *.pyo

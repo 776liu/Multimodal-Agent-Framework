@@ -54,3 +54,11 @@ class Memory:
             return
         summary = " | ".join([r.content or r.url for r in results if r.content or r.url])
         self.add(session_id, "assistant", summary)
+
+    def has_session(self, session_id: str) -> bool:
+        """前端检查会话是否已在记忆缓存中"""
+        return session_id in self.sessions
+
+    def delete_session(self, session_id: str) -> None:
+        """删除指定会话的全部记忆"""
+        self.sessions.pop(session_id, None)
