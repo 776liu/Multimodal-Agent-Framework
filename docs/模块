@@ -1,28 +1,83 @@
-[用户请求] --> Agent
+完整架构：
+    [前端请求]
+        |
+        | HTTP (POST /api/task/submit, GET /api/task/{task_id})
+        V 
+    [FastAPI]—— LPUSH ——> [Redis List "agent: queue"]
+                                    | BLPOP 
+                                    V 
+                                [worker]
+                                    | 调用 agent.run(user_input, session_id)
+                                    V
+                            +--核心引擎模块--+
+                            |    TaskRouter   
+                            |    Router
+                            |    LLMClient
+                            |    Builder    ————>[SQLite]
+                            |    Memory     ————>[SQLite]
+                            |    Agent
+                            +---------------+
+                                    |
+                                    |
+                                    V 
+                            [Redis Hash "agent:task{task_id}"]
+                            (更新 status="success/failsed", result=,,)
+                                    ^
+                                    | HGET
+                                [FastAPI]
+                                    |
+                                    |   HHTTP轮询
+                                    V 
+                                [前端]
+
+在核心引擎外面加了一层异步任务调度。Worker 是独立进程，通过 Redis 队列解耦前后端。
+异步任务调度与核心引擎模块是同步执行，只是调用方从前端请求变成了 Worker。  
+--------------------------------------------------------------
+核心模块：
+    [用户请求] --> Agent
+                    |
+                    v
+                TaskRouter (拆解任务)
+                    |
+                    v (子任务列表)
+                Agent (遍历执行计划)
+                    |
+                    v (子任务 + 需求标签)
+                Router (匹配模型)
+                    |
+                    v (可用的模型地址)
+                llmClient (发起HTTP调用)
+                    |
+                    v (原始结果/错误码)
+                Agent (收集结果, 遇错则调Router再要地址)
+                    |
+                    v (所有原始结果)
+                Builder (拼装JSON) -> Storage（存入SQLite持久化）
+                    |
+                    V
+                 Memory（存入会话记忆）
+                    |
+                    v (统一响应)
+    [前端] <--  Agent
+
+-----------------------------------------------------------------
+异步请求链： 
+    [前端请求] --> FastAPI
+                    |
+                    v
+                RedisList(任务队列, agent:queue)
                 |
-                v
-            TaskRouter (拆解任务)
+                V(Redis LPUDH/BLPOP)
+                RedisHash(任务状态存储, agent:task: {task_id})
                 |
-                v (子任务列表)
-            Agent (遍历执行计划)
+                V (队列任务)
+                Worker
                 |
-                v (子任务 + 需求标签)
-            Router (匹配模型)
+                V 
+                Agent(执行) —> SQLite(写入日志)
                 |
-                v (可用的模型地址)
-            llmClient (发起HTTP调用)
-                |
-                v (原始结果/错误码)
-            Agent (收集结果, 遇错则调Router再要地址)
-                |
-                v (所有原始结果)
-            Builder (拼装JSON) -> Storage（存入SQLite持久化）
-                |
-                V
-             Memory（存入会话记忆）
-                |
-                v (统一响应)
-[前端] <--  Agent
+                V 
+                Redis(更新状态)
 
 
 ================================================
@@ -403,6 +458,103 @@
   2. 对话消息按 session_id 存储和查询
   3. 任务日志按 task_id 唯一存储，重复写入时覆盖
   4. 日志写入失败时静默处理，不影响主流程
+
+----------------------------------------------------------
+模块名：TaskManager
+职责：定义任务存储的标准接口，抽象接口
+
+抽象方法：
+    - create_task(task_id: dict)->str
+        """创建任务，生成唯一 task_id，初始化状态为 pending"""
+        输入：{"user_input": "",
+                "session_id": ""}
+        输出：task_id: str
+
+    - get_task(task_id: str)->dict
+        """查询任务当前状态和结果"""
+        输入：task_id
+        输出：{
+            "task_id": "", "status": "panding/processing/success/failed", "result":{}, "created_at": 
+        }
+    - update_task(task_id: str, status: str, result: dict = None) ->None
+        """更新任务状态，status 为 pending / processing / success / failed"""
+        输入：task_id, status, result
+
+核心逻辑：
+    1.定义三个抽象方法的签名，不提供具体实现    
+    2.子类必须实现全部三个方法
+    3.create_task 生成 task_id 并存储初始状态
+    4.get_task 返回任务完整信息，若 task_id 不存在则返回 None
+    5.update_task 更新状态和结果，写入后不可回滚
+--------------------------------------------------------------------
+模块名：RedisTaskManager (TaskManager)
+职责：基于 Redis 实现任务队列和状态存储
+输入输出：继承TaskManager
+Redis 数据结构：
+    agent:queue             List    任务队列，LPUSH 入队，BLPOP 出队
+    agent:task: {task_id}   Hash    任务状态和结果，字段：status, result, created_at, user_input, session_id
+
+核心逻辑：
+    1.create_task：生成 UUID 作为 task_id，将任务数据序列化后 LPUSH 到 agent:queue，
+        同时 HSET 初始化 agent:task:{task_id}，设置 EXPIRE 3600 秒
+    2.get_task：HGETALL 获取 agent:task:{task_id} 所有字段，
+        反序列化 result 字段（JSON），若 Key 不存在则返回 None
+    3.update_task：HSET 更新 agent:task:{task_id} 的 status 和 result 字段
+    4.所有 Redis 操作使用连接池管理连接，不每次创建新连接
+
+----------------------------------------------------------------------
+模块名：Worker
+职责：独立进程，从 Redis 队列取任务，调用 Agent 执行，更新 Redis 状态和 SQLite 日志
+输入：BLPOP，从Redis队列获取任务数据
+输出：将结果写入Redis和SQLite
+核心逻辑：
+
+    启动时加载 Agent 和 Storage 实例（复用 load_agent() 和 Storage 初始化逻辑）
+
+    进入无限循环：BLPOP agent:queue 阻塞等待任务，超时 5 秒后重试
+
+    拿到任务后，调用 update_task(task_id, "processing") 更新状态
+
+    调用 agent.run(user_input, session_id) 执行核心引擎
+
+    执行完成后，调用 update_task(task_id, final_status, result) 写入 Redis
+
+    同时调用 Storage.save_task_log(...) 和 Storage.save_message(...) 写入 SQLite
+
+    若执行过程中 Worker 崩溃，Redis 中的任务状态停留在 processing，由超时机制兜底
+
+------------------------------------------------------------------------
+模块名：FastAPI 路由
+职责：接收前端请求，提交任务队列，提供任务状态查询
+端点：
+    POST /api/task/submit   
+        输入：{
+                "user_input": "", 
+                "session_id": ""
+            }
+        输出：{
+            "task_id": "",
+            "status": "panding"
+        } + HTTP 202
+    
+    GET /api/task/{task_id}
+        输入：task_id
+        输出：{
+            "task_id": "",
+            "status": "",
+            "result": ""
+        } 无输出时返回404
+
+核心逻辑：
+
+    /api/task/submit：校验 user_input 非空，调用 TaskManager.create_task()，返回 202 和 task_id
+
+    /api/task/{task_id}：调用 TaskManager.get_task()，存在则返回状态和结果，不存在则返回 404
+
+    使用 FastAPI 框架，自动生成 OpenAPI 文档（/docs）
+
+    不持有 Agent 实例——Agent 由 Worker 持有，FastAPI 只做任务提交和状态查询
+
 ==============================================================
 
 ====================================================
@@ -779,3 +931,27 @@ Agent 启动后、进入 READY 状态之前，做一个 health_check
 
     预期输出：方法正常返回，不抛出异常。get_messages() 和 save_message() 同理，各自静默处理错误
 
+----------------------------------------------------------
+Worker 模块：
+
+验证用例1（成功）：启动 Worker，向 agent:queue 手动 LPUSH 一个简单文本任务，验证 Worker 能正确消费并更新 Redis 状态为 success
+
+验证用例2（失败）：传入一个会导致 Agent 失败的输入（如无效模型），验证 Worker 更新 Redis 状态为 failed，并且 SQLite 日志中记录了错误
+
+---------------------------------------------------------------
+RedisTaskManager 模块：
+
+验证用例1（成功）：调用 create_task → 验证 Redis 中存在对应 Key，且状态为 pending
+
+验证用例2（成功）：调用 update_task → 再调用 get_task → 验证状态和结果一致
+
+验证用例3（失败）：调用 get_task 传入不存在的 task_id → 返回 None
+
+-----------------------------------------------------------------
+FastAPI 路由层：
+
+验证用例1（成功）：POST /api/task/submit → 返回 202 和 task_id
+
+验证用例2（成功）：GET /api/task/{task_id} → 返回当前状态
+
+验证用例3（失败）：GET /api/task/nonexistent → 返回 404
