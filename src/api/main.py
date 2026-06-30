@@ -5,7 +5,7 @@ from src.api import create_agent
 from src.api.task_manager import MemoryTaskManager
 from src.api.worker import Worker
 import threading
-
+from src.api.redis_task_manager import RedisTaskManager
 
 class TaskRequest(BaseModel):
     user_input: str
@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期：装配引擎 → 创建队列 → 启动 Worker,关闭时通知退出"""
     agent, storage = create_agent()
 
-    task_manager = MemoryTaskManager()
+    task_manager = RedisTaskManager()
     app.state.task_manager = task_manager
 
     stop_event = threading.Event()

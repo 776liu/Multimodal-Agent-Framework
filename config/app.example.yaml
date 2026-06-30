@@ -1,0 +1,5 @@
+# 前端配置（模板文件，可安全提交）
+app:
+  api_base: "http://127.0.0.1:8000"   # FastAPI 后端地址
+  poll_interval: 2                     # 轮询间隔（秒）
+  timeout_seconds: 180                 # 任务超时（秒）

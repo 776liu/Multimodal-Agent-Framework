@@ -30,3 +30,26 @@ def load_model_config(config_path: str = None) -> list[ModelInfo]:
             capability=item["capability"]
         ))
     return models
+
+
+def load_app_config(config_path: str = None) -> dict:
+    """从 config/app.yaml 加载前端应用参数"""
+    if config_path is None:
+        config_path = Path(__file__).parent.parent.parent / "config" / "app.yaml"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        # 配置文件不存在，用模板文件或默认值
+        example_path = Path(__file__).parent.parent.parent / "config" / "app.example.yaml"
+        if example_path.exists():
+            with open(example_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        else:
+            config = {}
+    app = config.get("app", {}) if config else {}
+    return {
+        "api_base": app.get("api_base", "http://127.0.0.1:8000"),
+        "poll_interval": app.get("poll_interval", 2),
+        "timeout_seconds": app.get("timeout_seconds", 180),
+    }

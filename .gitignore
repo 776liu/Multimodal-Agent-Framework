@@ -1,8 +1,10 @@
 config/model.yaml
 config/model.test.yaml
+config/app.yaml
 logs
 data
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+dump.rdb
