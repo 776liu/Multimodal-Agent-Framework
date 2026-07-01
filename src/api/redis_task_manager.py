@@ -68,3 +68,12 @@ class RedisTaskManager(TaskManager):
         _, task_id = result
         task_info = self.get_task(task_id)
         return (task_id, task_info) if task_info else None
+    
+    def get_task_by_session(self, session_id: str) -> list:
+        """返回指定会话下所有进行中的任务"""
+        tasks = []
+        for key in self.client.scan_iter(f"{self._task_prefix}*"):
+            data = self.client.hgetall(key)
+            if data.get("session_id") == session_id and data.get("status") in ("pending", "processing"):
+                tasks.append(data)
+        return tasks

@@ -1,5 +1,5 @@
 from src.core.agent import Agent
-from src.api.task_manager import MemoryTaskManager
+from src.api.task_manager import TaskManager
 from src.core.storage import Storage
 from src.core.models import TaskResult, CallChainEntry
 import threading
@@ -13,7 +13,7 @@ class Worker:
     def __init__(
         self,
         agent: Agent,
-        task_manager: MemoryTaskManager,
+        task_manager: TaskManager,
         storage: Storage,
         stop_event: threading.Event,
     ):
@@ -59,12 +59,13 @@ class Worker:
                         json.dumps(frontend.get("data", {}), ensure_ascii=False),
                     )
                     self.storage.save_task_log(
-                        task_id, 
+                        task_id,
                         session_id,
-                        frontend, 
+                        frontend,
                         log,
-                        results=results_objs, 
+                        results=results_objs,
                         call_chain=chain_objs,
+                        user_input=user_input,
                     )
                 except Exception as e:
                     self.task_manager.update_task(task_id, "FAILED", {"error": str(e)})

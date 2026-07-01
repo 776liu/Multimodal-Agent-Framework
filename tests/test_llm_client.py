@@ -11,7 +11,7 @@ def test_text_generation():
     model_info = router.get_model("text-generation")
 
     if "error" in model_info:
-        print(f"❌ Router 获取模型失败: {model_info['error']}")
+        print(f"[FAIL] Router 获取模型失败: {model_info['error']}")
         return
 
     print(f"模型: {model_info['model_name']}")
@@ -26,10 +26,10 @@ def test_text_generation():
     )
 
     if response.status == "SUCCESS":
-        print(f"✅ 文本生成成功")
+        print(f"[OK] 文本生成成功")
         print(f"内容: {response.data.content}")
     else:
-        print(f"❌ 文本生成失败")
+        print(f"[FAIL] 文本生成失败")
         print(f"错误码: {response.error_code}")
 
     return response
@@ -44,7 +44,7 @@ def test_image_generation():
     model_info = router.get_model("image-generation")
 
     if "error" in model_info:
-        print(f"❌ Router 获取模型失败: {model_info['error']}")
+        print(f"[FAIL] Router 获取模型失败: {model_info['error']}")
         return
 
     print(f"模型: {model_info['model_name']}")
@@ -59,11 +59,11 @@ def test_image_generation():
     )
 
     if response.status == "SUCCESS":
-        print(f"✅ 图片生成成功")
+        print(f"[OK] 图片生成成功")
         print(f"图片URL: {response.data.url}")
         print(f"（请手动复制URL到浏览器查看图片）")
     else:
-        print(f"❌ 图片生成失败")
+        print(f"[FAIL] 图片生成失败")
         print(f"错误码: {response.error_code}")
 
     return response

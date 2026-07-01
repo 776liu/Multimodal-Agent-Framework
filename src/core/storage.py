@@ -64,7 +64,7 @@ class Storage:
                 row["name"] for row in
                 conn.execute("PRAGMA table_info(task_logs)").fetchall()
             }
-        for col in ("results_json", "call_chain_json"):
+        for col in ("results_json", "call_chain_json", "user_input"):
             if col not in existing:
                 with self._get_conn() as conn:
                     conn.execute(f"ALTER TABLE task_logs ADD COLUMN {col} TEXT")
@@ -108,14 +108,15 @@ class Storage:
         frontend: dict, log: dict,
         results: Optional[List[TaskResult]] = None,
         call_chain: Optional[List[CallChainEntry]] = None,
+        user_input: str = "",
     ) -> None:
         """保存任务日志（results / call_chain 接受 dataclass 对象列表）"""
         try:
             with self._get_conn() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO task_logs "
-                    "(task_id, session_id, task_status, frontend_json, log_json, results_json, call_chain_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "(task_id, session_id, task_status, frontend_json, log_json, results_json, call_chain_json, user_input) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         task_id,
                         session_id,
@@ -124,6 +125,7 @@ class Storage:
                         json.dumps(log, ensure_ascii=False),
                         json.dumps(self._serialize_results(results or []), ensure_ascii=False),
                         json.dumps(self._serialize_call_chain(call_chain or []), ensure_ascii=False),
+                        user_input,
                     ),
                 )
         except Exception:
@@ -189,10 +191,10 @@ class Storage:
             return row["content"] if row else "新对话"
 
     def get_task_history(self, session_id: str, limit: int = 10) -> List[dict]:
-        """获取某个会话的任务历史（最近 N 条，供前端展示）"""
+        """获取某个会话的任务历史（最近 N 条，含 user_input 供前端恢复）"""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT task_id, task_status, frontend_json, created_at "
+                "SELECT task_id, task_status, frontend_json, user_input, created_at "
                 "FROM task_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
                 (session_id, limit),
             ).fetchall()
@@ -204,6 +206,7 @@ class Storage:
                     "task_id": row["task_id"],
                     "task_status": row["task_status"],
                     "created_at": row["created_at"],
+                    "user_input": row["user_input"] or "",
                     "summary": results_data.get("results", []),
                 })
             return result

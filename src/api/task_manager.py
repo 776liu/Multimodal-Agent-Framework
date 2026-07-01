@@ -62,5 +62,10 @@ class MemoryTaskManager(TaskManager):
         time.sleep(timeout)
         return None
 
-
+    def get_task_by_session(self, session_id):
+        tasks = []
+        for task_id, info in self._tasks.items():
+            if info.get("session_id") == session_id and info.get("status") in ("pending", "processing"):
+                tasks.append({"task_id": task_id, **info})
+        return tasks
 
