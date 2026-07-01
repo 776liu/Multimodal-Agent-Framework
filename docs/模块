@@ -1,7 +1,7 @@
 完整架构：
     [前端请求]
         |
-        | HTTP (POST /api/task/submit, GET /api/task/{task_id})
+        | HTTP (POST /api/task/submit, GET /api/task/{task_id}，DELETE /api/session/{session_id}/history)
         V 
     [FastAPI]—— LPUSH ——> [Redis List "agent: queue"]
                                     | BLPOP 
@@ -452,12 +452,18 @@
   - save_message(session_id, role, content) → None
   - get_messages(session_id, limit) → List[dict]
   - save_task_log(task_id, session_id, frontend, log) → None
+  - delete_messages(session_id) ->None
+  - delete_task_history(session_id) ->None
 
 核心逻辑：
   1. 首次使用时自动建表
   2. 对话消息按 session_id 存储和查询
   3. 任务日志按 task_id 唯一存储，重复写入时覆盖
   4. 日志写入失败时静默处理，不影响主流程
+  5.delete_messages：执行 DELETE FROM messages WHERE session_id = ?
+  6.delete_task_history：执行 DELETE FROM task_logs WHERE session_id = ?
+  7.两个方法独立调用，不互相依赖——调用方可根据需要只删消息或只删任务
+  8.若 session_id 不存在，删除零行，不报错（幂等）
 
 ----------------------------------------------------------
 模块名：TaskManager
@@ -545,6 +551,10 @@ Redis 数据结构：
             "result": ""
         } 无输出时返回404
 
+    DELETE /api/session/{session_id}/history
+        输入：session_id
+        输出：  成功：204 No Content；
+                失败：404 或 500
 核心逻辑：
 
     /api/task/submit：校验 user_input 非空，调用 TaskManager.create_task()，返回 202 和 task_id
@@ -554,6 +564,16 @@ Redis 数据结构：
     使用 FastAPI 框架，自动生成 OpenAPI 文档（/docs）
 
     不持有 Agent 实例——Agent 由 Worker 持有，FastAPI 只做任务提交和状态查询
+
+    校验 session_id 是否存在（从 sessions 表或 task_logs 表查询）
+
+    若存在，依次调用 Storage.delete_messages(session_id) 和 Storage.delete_task_history(session_id)
+
+    若不存在，返回 404
+
+    若删除过程中出现数据库异常，返回 500
+
+    此端点只删除历史数据，不删除会话本身（sessions 表不受影响）
 
 ==============================================================
 
@@ -931,6 +951,29 @@ Agent 启动后、进入 READY 状态之前，做一个 health_check
 
     预期输出：方法正常返回，不抛出异常。get_messages() 和 save_message() 同理，各自静默处理错误
 
+验证用例（成功——删除指定会话的消息）：
+
+    前置条件：messages 表中存在 session_id="test-001" 的多条消息
+
+    输入：调用 delete_messages(session_id="test-001")
+
+    预期输出：方法正常返回（无异常），再次调用 get_messages("test-001") 返回空列表
+
+验证用例（成功——删除指定会话的任务日志）：
+
+    前置条件：task_logs 表中存在 session_id="test-001" 的多条任务记录
+
+    输入：调用 delete_task_history(session_id="test-001")
+
+    预期输出：方法正常返回，再次调用 get_task_history("test-001") 返回空列表
+
+验证用例（成功——删除不存在的会话，幂等）：
+
+    前置条件：messages 和 task_logs 表中不存在 session_id="nonexistent"
+
+    输入：调用 delete_messages("nonexistent") 和 delete_task_history("nonexistent")
+
+    预期输出：两个方法均正常返回，不抛出异常
 ----------------------------------------------------------
 Worker 模块：
 
@@ -955,3 +998,19 @@ FastAPI 路由层：
 验证用例2（成功）：GET /api/task/{task_id} → 返回当前状态
 
 验证用例3（失败）：GET /api/task/nonexistent → 返回 404
+
+验证用例1（成功——删除存在的会话历史）：
+
+    前置条件：session_id="test-001" 在 messages 和 task_logs 表中有数据
+
+    输入：DELETE /api/session/test-001/history
+
+    预期输出：返回 204 No Content，无响应体。再次调用 GET /api/session/test-001/history 返回空数据
+
+验证用例2（失败——会话不存在）：
+
+    前置条件：session_id="nonexistent" 在任何表中均无记录
+
+    输入：DELETE /api/session/nonexistent/history
+
+    预期输出：返回 404，响应体包含错误信息
