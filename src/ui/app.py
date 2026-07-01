@@ -464,7 +464,6 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # 轮询逻辑
 # ---------------------------------------------------------------------------
-TERMINAL_STATUSES = {"SUCCESS", "PARTIAL_SUCCESS", "FAILED", "expired"}
 in_progress_count = sum(
     1 for t in display_tasks
     if t["status"] not in TERMINAL_STATUSES
