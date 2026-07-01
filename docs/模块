@@ -555,6 +555,34 @@ Redis 数据结构：
         输入：session_id
         输出：  成功：204 No Content；
                 失败：404 或 500
+
+    GET /api/session
+        输出：{
+                "sessions": [
+                    {"session_id": "abc123", 
+                    "label": "翻译 Hello World", 
+                    "created_at": 1234567890.0},
+                     ...]
+                 }
+        输出（失败）：{"sessions": []}（数据库为空或无会话时返回空列表）
+
+    GET /api/session/{session_id}/history
+        输入：session_id（路径参数）
+        输出：{
+            "session_id": "...", 
+            "messages": [...], 
+            "tasks": [...]
+            }
+        输出（失败）：会话不存在时返回空数据（不返回 404，方便前端初始化）
+
+    GET /api/session/{session_id}/tasks
+        输入：session_id（路径参数）
+        输出：{
+                "session_id": "...", 
+                "processing": [...], 
+                "completed": [...]
+                }
+    
 核心逻辑：
 
     /api/task/submit：校验 user_input 非空，调用 TaskManager.create_task()，返回 202 和 task_id
@@ -1014,3 +1042,25 @@ FastAPI 路由层：
     输入：DELETE /api/session/nonexistent/history
 
     预期输出：返回 404，响应体包含错误信息
+
+验证用例1：获取会话列表
+
+    输入：GET /api/sessions
+
+    预期输出：状态码 200，响应体包含 sessions 数组。若数据库中有会话数据，数组非空；若无数据，数组为空
+
+验证用例2：获取会话对话历史
+
+    前置条件：session_id="test-001" 在 messages 和 task_logs 表中有数据
+
+    输入：GET /api/session/test-001/history
+
+    预期输出：状态码 200，响应体包含 messages 和 tasks 数组，数组非空
+
+验证用例3：获取会话任务列表
+    
+    前置条件：session_id="test-001" 在 Redis 中有进行中任务，在 SQLite 中有已完成任务
+    
+    输入：GET /api/session/test-001/tasks
+    
+    预期输出：状态码 200，响应体包含 processing 和 completed 数组。processing 中的任务 status 为 pending 或 processing，completed 中的任务 status 为终态
