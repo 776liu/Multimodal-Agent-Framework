@@ -86,3 +86,14 @@ async def list_sessions(request: Request):
     storage = request.app.state.storage
     sessions = storage.list_sessions()
     return {"sessions": sessions}
+
+@app.delete("/api/session/{session_id}/history", status_code=204)
+async def delete_conversation_history(session_id: str, request: Request)-> None:
+    """删除会话的对话历史和任务历史"""
+    storage = request.app.state.storage
+    task_manager = request.app.state.task_manager
+    for task in task_manager.get_task_by_session(session_id):
+        task_manager.update_task(task["task_id"], "FAILED", {"error: Conversation history deleted"})
+
+    storage.delete_messages(session_id)
+    storage.delete_task_history(session_id)

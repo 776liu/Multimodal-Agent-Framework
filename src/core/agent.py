@@ -49,9 +49,15 @@ class Agent:
         else:
             full_input = user_input
 
+        print(f"[DEBUG] 注入的完整上下文:\n{full_input}")  # 临时调试
+
         # PLANNING
         _emit({"stage": "planning"})
         plan = self.task_router.route_task(full_input)
+        if plan and plan.subtasks:
+            print(f"[DEBUG] TaskRouter 返回的执行计划: intent={plan.intent}, subtasks={[(s.step, s.capability, s.prompt[:60]) for s in plan.subtasks]}")
+        else:
+            print(f"[DEBUG] TaskRouter 解析失败，plan={plan}")
 
         if not plan or not plan.subtasks:
             return self._build_response(task_id, "FAILED", results, call_chain)
@@ -71,6 +77,7 @@ class Agent:
                 # ROUTING
                 _emit({"stage": "routing", "step": i + 1, "total": total})
                 model_info = self.router.get_model(capability_required, failed_models)
+                print(f"[DEBUG] 子任务{i+1} 路由: capability={capability_required}, 选中={model_info.get('registered_name', 'N/A')}, 已排除={failed_models}")
 
                 if "error" in model_info:
                     break
@@ -127,6 +134,7 @@ class Agent:
                         attempted_at=attempted_at,
                     ))
                     failed_models.append(model_info["registered_name"])
+                    print(f"[DEBUG] 子任务{i+1} 调用失败: model={model_info['registered_name']}, error={response.error_code}, 将尝试下一个模型")
                     _emit({
                         "stage": "subtask_done",
                         "step": i + 1,

@@ -1,5 +1,6 @@
 from typing import List,Dict
 from src.core.models import Messages
+import json
 
 
 class Memory:
@@ -27,8 +28,8 @@ class Memory:
     def get_history(self, session_id: str) -> List[Messages]:
         """获取历史会话"""
         if session_id not in self.sessions and self.storage:
-            rows = self.storage.get_messages(session_id, self.max_history *2)
-            self.sessions[session_id] = [Messages(**rows) for row in rows]
+            row = self.storage.get_messages(session_id, self.max_history *2)
+            self.sessions[session_id] = [Messages(**row) for row in row]
         return self.sessions.get(session_id, [])
     
     def build_context(self, session_id: str, current_input: str) -> str:
@@ -42,9 +43,27 @@ class Memory:
         
         context = "以下是之前的对话记录，请根据上下文理解用户的当前需求：\n"
         for msg in history:
-            role_name = "user" if msg.role == "user" else "assistant"
-            context +=f"[{role_name}]: {msg.content}\n"
-        context += f"\n用户的当前需求: {current_input}"
+            if msg.role == "user":
+                context += f"用户: {msg.content}\n"
+            else:
+                try:
+                    data = json.loads(msg.content)
+                    if isinstance(data, dict) and "results" in data:
+                        parts = []
+                        for r in data["results"]:
+                            rtype = r.get("type", "")
+                            if rtype == "image" and r.get("url"):
+                                parts.append(f"上一步生成了一张图片，URL是：{r['url']}")
+                            elif rtype == "text" and r.get("content"):
+                                parts.append(f"上一步生成了文本：{r['content']}")
+                        if parts:
+                            context += f"助手: {'；'.join(parts)}\n"
+                        else:
+                            context += f"助手: {msg.content}\n"
+                    else:
+                        context += f"助手: {msg.content}\n"
+                except (json.JSONDecodeError, TypeError):
+                    context += f"助手: {msg.content}\n"
 
         return context
 

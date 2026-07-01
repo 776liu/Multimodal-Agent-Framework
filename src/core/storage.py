@@ -140,6 +140,17 @@ class Storage:
                 (session_id, label),
             )
 
+
+    def delete_messages(self, session_id:str)-> None:
+        """删除某个会话的全部消息"""
+        with self._get_conn()as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+
+    def delete_task_history(self, session_id: str) -> None:
+        """删除某个会话的日志调用"""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM task_logs WHERE session_id = ?", (session_id,))
+
     def delete_session_data(self, session_id: str) -> None:
         """删除会话相关的全部持久数据"""
         with self._get_conn() as conn:

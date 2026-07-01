@@ -180,6 +180,18 @@ def api_get_task(task_id: str) -> dict | None:
         return None
 
 
+def api_delete_session_history(session_id: str) -> int | None:
+    """删除会话历史 → 返回 HTTP 状态码，失败返回 None"""
+    try:
+        resp = requests.delete(
+            f"{API_BASE}/api/session/{session_id}/history",
+            timeout=10,
+        )
+        return resp.status_code
+    except requests.RequestException:
+        return None
+
+
 def api_get_session_tasks(session_id: str) -> dict | None:
     """获取某会话下所有任务（仅用于发现 task_id，不直接使用其中的 result 数据）"""
     try:
@@ -218,6 +230,14 @@ if "session_id" not in st.session_state:
 if "_submitted" not in st.session_state:
     st.session_state._submitted = {}
 
+# task_in_progress → 执行锁，有未完成任务时为 True
+if "task_in_progress" not in st.session_state:
+    st.session_state.task_in_progress = False
+
+# _task_states → 状态流转记录 {task_id: [(status, timestamp), ...]}
+if "_task_states" not in st.session_state:
+    st.session_state._task_states = {}
+
 # F5 刷新后从 API 恢复 _submitted
 if "_submitted_restored" not in st.session_state:
     st.session_state._submitted_restored = True
@@ -246,6 +266,8 @@ def fill_prompt(value: str):
 def clear_all():
     st.session_state.user_input = ""
     st.session_state._submitted = {}
+    st.session_state._task_states = {}
+    st.session_state.task_in_progress = False
 
 
 def do_submit():
@@ -261,6 +283,28 @@ def do_submit():
     task_id = result["task_id"]
     st.session_state._submitted[task_id] = text
     st.session_state.user_input = ""
+    st.session_state.task_in_progress = True
+
+
+def delete_history():
+    """删除当前会话的全部对话历史和任务日志"""
+    sid = st.session_state.session_id
+    status_code = api_delete_session_history(sid)
+
+    if status_code is None:
+        st.error("后端连接失败，请确认 FastAPI 已启动")
+        return
+
+    if status_code == 204:
+        st.session_state._submitted = {}
+        st.session_state._task_states = {}
+        st.session_state.user_input = ""
+        st.session_state.task_in_progress = False
+        st.success("对话历史已删除")
+    elif status_code == 404:
+        st.error(f"会话 `{sid}` 不存在，无法删除历史")
+    else:
+        st.error(f"删除失败，服务端返回状态码 {status_code}")
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +333,14 @@ with col_q3:
 
 col_btn1, col_btn2, _ = st.columns([1, 1, 4])
 with col_btn1:
-    st.button("开始执行", type="primary", width="stretch", on_click=do_submit)
+    btn_label = "任务执行中..." if st.session_state.task_in_progress else "开始执行"
+    st.button(
+        btn_label,
+        type="primary",
+        width="stretch",
+        on_click=do_submit,
+        disabled=st.session_state.task_in_progress,
+    )
 with col_btn2:
     st.button("清空", width="stretch", on_click=clear_all)
 
@@ -352,6 +403,14 @@ for tid in known_task_ids:
         "created_at": created_at,
     })
 
+    # ---- 记录状态流转（仅在新状态出现时追加）----
+    states = st.session_state._task_states
+    if tid not in states:
+        states[tid] = []
+    chain = states[tid]
+    if not chain or chain[-1][0] != status:
+        chain.append((status, time.time()))
+
 # 3. 按创建时间降序排列（新的在上面）
 display_tasks.sort(key=lambda t: t["created_at"], reverse=True)
 
@@ -361,7 +420,7 @@ display_tasks.sort(key=lambda t: t["created_at"], reverse=True)
 with st.sidebar:
     st.subheader("调试日志")
 
-    debug_tab1, debug_tab2 = st.tabs(["任务调试", "调用链路"])
+    debug_tab1, debug_tab2, debug_tab3 = st.tabs(["任务调试", "调用链路", "状态流转"])
 
     with debug_tab1:
         if not display_tasks:
@@ -461,6 +520,47 @@ with st.sidebar:
                 )
             st.markdown('</div>', unsafe_allow_html=True)
 
+    with debug_tab3:
+        task_states = st.session_state._task_states
+        if not task_states:
+            st.caption("暂无状态流转记录")
+        else:
+            # 按 task 最新状态时间来排序
+            sorted_tids = sorted(
+                task_states.keys(),
+                key=lambda tid: task_states[tid][-1][1] if task_states[tid] else 0,
+                reverse=True,
+            )
+            for tid in sorted_tids:
+                chain = task_states[tid]
+                ui = st.session_state._submitted.get(tid, tid[:16])
+                current = chain[-1][0] if chain else "?"
+                is_done = current in TERMINAL_STATUSES
+                marker = "[OK]" if current == "SUCCESS" else "[FAIL]" if current in ("FAILED", "expired") else "[..]"
+                label = f"{marker} {ui[:32]}..."
+                with st.expander(label, expanded=not is_done):
+                    st.caption(f"**Task ID:** `{tid[:20]}...`")
+                    # 逐段展示流转
+                    flow_parts: list[str] = []
+                    for i, (s, ts) in enumerate(chain):
+                        try:
+                            t_str = datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+                        except (ValueError, TypeError):
+                            t_str = "--:--:--"
+                        arrow = " -> " if i > 0 else ""
+                        flow_parts.append(f"{arrow}`{s}` ({t_str})")
+                    st.caption("".join(flow_parts))
+
+    st.divider()
+    st.button(
+        "删除当前对话历史",
+        type="secondary",
+        width="stretch",
+        icon=":material/delete_forever:",
+        on_click=delete_history,
+        help="删除当前会话的全部消息和任务日志（会话本身保留）",
+    )
+
 # ---------------------------------------------------------------------------
 # 轮询逻辑
 # ---------------------------------------------------------------------------
@@ -469,8 +569,24 @@ in_progress_count = sum(
     if t["status"] not in TERMINAL_STATUSES
 )
 
+# ---- 根据当前任务状态推导执行锁 ----
+was_in_progress = st.session_state.task_in_progress
+st.session_state.task_in_progress = (in_progress_count > 0)
+# 终态转换时多刷新一次，让按钮从"任务执行中..."变回"开始执行"
+if was_in_progress and not st.session_state.task_in_progress:
+    st.rerun()
+
 if in_progress_count > 0:
-    st.caption(f"正在等待 {in_progress_count} 个任务完成...（每 {POLL_INTERVAL}s 自动刷新）")
+    # ---- 实时状态流转 ----
+    lines: list[str] = []
+    for t in display_tasks:
+        if t["status"] not in TERMINAL_STATUSES:
+            tid_short = t["task_id"][:8]
+            chain = st.session_state._task_states.get(t["task_id"], [])
+            flow = " -> ".join(s for s, _ in chain) if chain else t["status"]
+            lines.append(f"`{tid_short}...` {flow}")
+    flow_text = "  |  ".join(lines) if lines else f"正在等待 {in_progress_count} 个任务完成..."
+    st.caption(f"实时流转: {flow_text}（每 {POLL_INTERVAL}s 刷新）")
     time.sleep(POLL_INTERVAL)
     st.rerun()
 
