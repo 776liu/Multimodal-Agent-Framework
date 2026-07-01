@@ -49,18 +49,20 @@ class Agent:
         else:
             full_input = user_input
 
-        print(f"[DEBUG] 注入的完整上下文:\n{full_input}")  # 临时调试
+        # print(f"[DEBUG] 注入的完整上下文:\n{full_input}")  # 临时调试
 
         # PLANNING
         _emit({"stage": "planning"})
         plan = self.task_router.route_task(full_input)
         if plan and plan.subtasks:
-            print(f"[DEBUG] TaskRouter 返回的执行计划: intent={plan.intent}, subtasks={[(s.step, s.capability, s.prompt[:60]) for s in plan.subtasks]}")
-        else:
+        #     print(f"[DEBUG] TaskRouter 返回的执行计划: intent={plan.intent}, subtasks={[(s.step, s.capability, s.prompt[:60]) for s in plan.subtasks]}")
+        # else:
             print(f"[DEBUG] TaskRouter 解析失败，plan={plan}")
 
         if not plan or not plan.subtasks:
-            return self._build_response(task_id, "FAILED", results, call_chain)
+            log = self._log_planning_failure(task_id, user_input, reason="TaskRouter返回为空计划")
+            return self._build_response(task_id, "FAILED", results, call_chain, log_override=log)
+
 
         total = len(plan.subtasks)
         _emit({"stage": "planned", "count": total})
@@ -77,7 +79,7 @@ class Agent:
                 # ROUTING
                 _emit({"stage": "routing", "step": i + 1, "total": total})
                 model_info = self.router.get_model(capability_required, failed_models)
-                print(f"[DEBUG] 子任务{i+1} 路由: capability={capability_required}, 选中={model_info.get('registered_name', 'N/A')}, 已排除={failed_models}")
+                # print(f"[DEBUG] 子任务{i+1} 路由: capability={capability_required}, 选中={model_info.get('registered_name', 'N/A')}, 已排除={failed_models}")
 
                 if "error" in model_info:
                     break
@@ -134,7 +136,7 @@ class Agent:
                         attempted_at=attempted_at,
                     ))
                     failed_models.append(model_info["registered_name"])
-                    print(f"[DEBUG] 子任务{i+1} 调用失败: model={model_info['registered_name']}, error={response.error_code}, 将尝试下一个模型")
+                    # print(f"[DEBUG] 子任务{i+1} 调用失败: model={model_info['registered_name']}, error={response.error_code}, 将尝试下一个模型")
                     _emit({
                         "stage": "subtask_done",
                         "step": i + 1,
@@ -154,7 +156,19 @@ class Agent:
         self.memory.add_assistant_response(session_id, results)
         return self._build_response(task_id, "SUCCESS", results, call_chain)
 
-    def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list, session_id="default") -> dict:
+    def _log_planning_failure(self, task_id: str, user_input: str, reason: str) ->dict:
+        """记录规划失败的日志"""
+        return {
+            "task_id": task_id,
+            "timestamp": str(time.time()),
+            "task_status": "FAILED",
+            "system_status": "READY",
+            "call_chain": [],
+            "error_summary": [{"step": 0, "type": "PLANNING_FAILED", "reason": reason}],
+        }
+        
+
+    def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list, session_id="default", log_override=None) -> dict:
         """拼装 response"""
         if self.builder:
             builder_input = BuilderInput(
