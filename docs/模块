@@ -14,6 +14,7 @@
                             |    Router
                             |    LLMClient
                             |    Builder    ————>[SQLite]
+                            |    Eval       
                             |    Memory     ————>[SQLite]
                             |    Agent
                             +---------------+
@@ -52,7 +53,10 @@
                 Agent (收集结果, 遇错则调Router再要地址)
                     |
                     v (所有原始结果)
-                Builder (拼装JSON) -> Storage（存入SQLite持久化）
+                Builder (拼装JSON) 
+                    |
+                    v
+                Evaluator (审计环节) -> Storage（存入SQLite持久化）
                     |
                     V
                  Memory（存入会话记忆）
@@ -602,6 +606,37 @@ Redis 数据结构：
     若删除过程中出现数据库异常，返回 500
 
     此端点只删除历史数据，不删除会话本身（sessions 表不受影响）
+-----------------------------------------------------------------
+模块名：Evaluator
+
+职责：
+    对 Agent 执行结果进行质量审计，记录审计报告，支持人工反馈收集
+
+输入：
+    {"task_id": "...", "user_input": "...", "frontend_response": {...}}
+
+输出：
+    AuditReport（含审计得分、问题项列表、人工反馈记录）
+
+方法设计：
+    audit(task_id, user_input, frontend_response)：   
+        输入：task_id, 用户原始输入, Builder拼接的前端响应
+        输出：AuditReport对象
+        说明：自动审计入口，内部根据任务类型分发策略
+    
+    record_feedback(task_id, human_score, correction):
+        输入：task_id, 人工评分(0-5), 纠正文本
+        无输出
+        说明：人工反馈收集, 结果写入storage
+
+
+核心逻辑：
+
+    根据任务类型决定审计策略——文本任务用规则检查（关键词、长度阈值），多模态任务可选调 LLM-as-Judge
+
+    生成审计报告，写入 Storage 新增的 task_audits 表
+
+    支持人工反馈收集——用户/管理员对结果打分或纠正后，反馈记录写入同一张表
 
 ==============================================================
 
@@ -1018,6 +1053,9 @@ RedisTaskManager 模块：
 
 验证用例3（失败）：调用 get_task 传入不存在的 task_id → 返回 None
 
+---------------------------------------------------------------------
+evaluator 模块：
+
 -----------------------------------------------------------------
 FastAPI 路由层：
 
@@ -1064,3 +1102,4 @@ FastAPI 路由层：
     输入：GET /api/session/test-001/tasks
     
     预期输出：状态码 200，响应体包含 processing 和 completed 数组。processing 中的任务 status 为 pending 或 processing，completed 中的任务 status 为终态
+
