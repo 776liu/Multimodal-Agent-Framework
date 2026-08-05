@@ -80,11 +80,11 @@ class Conversatoin:
     updated_at: str = ""
 
 @dataclass
-class AutitReport:
+class AuditReport:
     """人工审计"""
     task_id: str
     audit_type: str
     quality_score: float
     issues: List[str]
-    human_feadback: Optional[dict]
+    human_feedback: Optional[dict]
     created_at: str

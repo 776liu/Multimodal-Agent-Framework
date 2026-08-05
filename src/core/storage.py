@@ -103,7 +103,7 @@ class Storage:
             self, 
             task_id: str, 
             audit_type: str, 
-            qulity_score: float, 
+            quality_score: float, 
             issues: List[str] = None, 
             human_feedback: Optional[dict] = None
         ) -> None:
@@ -116,7 +116,7 @@ class Storage:
                     (
                         task_id,
                         audit_type,
-                        qulity_score,
+                        quality_score,
                         json.dumps(issues, ensure_ascii=False) if issues else None,
                         json.dumps(human_feedback, ensure_ascii=False) if human_feedback else None,
                     ),
@@ -138,7 +138,7 @@ class Storage:
                     "issues": json.loads(row["issues"]) if row["issues"] else [],
                     "human_feedback": json.loads(row["human_feedback"]) if row["human_feedback"] else None,
                     "created_at": row["created_at"],
-                    "audits_type": row["audits_type"]
+                    "audit_type": row["audits_type"]
                 }
                 for row in rows
             ]
