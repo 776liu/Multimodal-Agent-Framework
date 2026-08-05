@@ -78,3 +78,13 @@ class Conversatoin:
     messages: List[Messages] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
+
+@dataclass
+class AutitReport:
+    """人工审计"""
+    task_id: str
+    audit_type: str
+    quality_score: float
+    issues: List[str]
+    human_feadback: Optional[dict]
+    created_at: str

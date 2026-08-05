@@ -618,7 +618,7 @@ Redis 数据结构：
 输出：
     AuditReport（含审计得分、问题项列表、人工反馈记录）
 
-方法设计：
+方法：
     audit(task_id, user_input, frontend_response)：   
         输入：task_id, 用户原始输入, Builder拼接的前端响应
         输出：AuditReport对象
@@ -629,6 +629,10 @@ Redis 数据结构：
         无输出
         说明：人工反馈收集, 结果写入storage
 
+容错设计：
+    审计过程中Evaluator自身出错：静默跳过，返回空的AuditReport，主程序不断
+    LLM-as-Judge调用失败：降级为规则检查，规则检查不可用标记为audit_type=“skipped”
+    人工反馈写入Storage失败：静默容错，不影响前端响应
 
 核心逻辑：
 
@@ -1055,6 +1059,26 @@ RedisTaskManager 模块：
 
 ---------------------------------------------------------------------
 evaluator 模块：
+
+验证用例1（成功——规则审计）：
+
+    输入：一个翻译任务的成功结果
+
+    预期输出：AuditReport 中 audit_type="rule"，quality_score >= 0，issues 为空或包含合理提醒
+
+验证用例2（成功——人工反馈记录）：
+
+    输入：task_id + human_score=4 + correction="翻译不够地道"
+
+    预期输出：Storage 中 task_audits 表新增一条记录，human_feedback 字段包含传入的评分和纠正文本
+
+验证用例3（失败——审计自身异常不阻塞主流程）：
+
+    前置条件：Evaluator 内部代码抛异常（模拟）
+    
+    输入：任意任务结果
+    
+    预期输出：Agent 正常返回前端响应，AuditReport 为默认空对象，不抛异常
 
 -----------------------------------------------------------------
 FastAPI 路由层：
