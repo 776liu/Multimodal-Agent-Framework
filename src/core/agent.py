@@ -1,9 +1,10 @@
-from src.core.models import LLMResponse, TaskResult, CallChainEntry, BuilderInput, Subtask, ExecutionPlan
+from src.core.models import TaskResult, CallChainEntry, BuilderInput, Subtask, ExecutionPlan
 from src.core.task_router import TaskRouter
 from src.core.router import Router
 from src.core.llm_client import LLMClient
 from src.core.builder import Builder
 from src.core.memory import Memory
+from src.core.evaluator import Evaluator
 import time
 import uuid
 from typing import Callable, Optional
@@ -12,12 +13,13 @@ from typing import Callable, Optional
 class Agent:
     """负责任务状态机"""
 
-    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient, builder: Builder, memory: Memory):
+    def __init__(self, task_router: TaskRouter, router: Router, llmclient: LLMClient, builder: Builder, memory: Memory, evaluator: Optional[Evaluator] = None):
         self.task_router = task_router
         self.router = router
         self.llm_client = llmclient
         self.builder = builder
         self.memory = memory
+        self.evaluator = evaluator
 
     def run(self, user_input: str, session_id: str, on_progress: Optional[Callable] = None) -> dict:
         """
@@ -49,19 +51,13 @@ class Agent:
         else:
             full_input = user_input
 
-        # print(f"[DEBUG] 注入的完整上下文:\n{full_input}")  # 临时调试
 
         # PLANNING
         _emit({"stage": "planning"})
         plan = self.task_router.route_task(full_input)
-        if plan and plan.subtasks:
-        #     print(f"[DEBUG] TaskRouter 返回的执行计划: intent={plan.intent}, subtasks={[(s.step, s.capability, s.prompt[:60]) for s in plan.subtasks]}")
-        # else:
-            print(f"[DEBUG] TaskRouter 解析失败，plan={plan}")
-
         if not plan or not plan.subtasks:
             log = self._log_planning_failure(task_id, user_input, reason="TaskRouter返回为空计划")
-            return self._build_response(task_id, "FAILED", results, call_chain, log_override=log)
+            return self._build_response(task_id, "FAILED", results, call_chain, user_input, log_override=log)
 
 
         total = len(plan.subtasks)
@@ -79,7 +75,6 @@ class Agent:
                 # ROUTING
                 _emit({"stage": "routing", "step": i + 1, "total": total})
                 model_info = self.router.get_model(capability_required, failed_models)
-                # print(f"[DEBUG] 子任务{i+1} 路由: capability={capability_required}, 选中={model_info.get('registered_name', 'N/A')}, 已排除={failed_models}")
 
                 if "error" in model_info:
                     break
@@ -136,7 +131,6 @@ class Agent:
                         attempted_at=attempted_at,
                     ))
                     failed_models.append(model_info["registered_name"])
-                    # print(f"[DEBUG] 子任务{i+1} 调用失败: model={model_info['registered_name']}, error={response.error_code}, 将尝试下一个模型")
                     _emit({
                         "stage": "subtask_done",
                         "step": i + 1,
@@ -148,15 +142,17 @@ class Agent:
 
             if not success:
                 if results:
-                    self.memory.add_assistant_response(session_id, results)
-                    return self._build_response(task_id, "PARTIAL_SUCCESS", results, call_chain)
+                    if self.memory:
+                        self.memory.add_assistant_response(session_id, results)
+                    return self._build_response(task_id, "PARTIAL_SUCCESS", results, call_chain, user_input)
                 else:
-                    return self._build_response(task_id, "FAILED", results, call_chain)
+                    return self._build_response(task_id, "FAILED", results, call_chain, user_input)
 
-        self.memory.add_assistant_response(session_id, results)
-        return self._build_response(task_id, "SUCCESS", results, call_chain)
+        if self.memory:
+            self.memory.add_assistant_response(session_id, results)
+        return self._build_response(task_id, "SUCCESS", results, call_chain, user_input)
 
-    def _log_planning_failure(self, task_id: str, user_input: str, reason: str) ->dict:
+    def _log_planning_failure(self, task_id: str, user_input: str, reason: str) -> dict:
         """记录规划失败的日志"""
         return {
             "task_id": task_id,
@@ -168,7 +164,15 @@ class Agent:
         }
         
 
-    def _build_response(self, task_id: str, final_status: str, results: list, call_chain: list, session_id="default", log_override=None) -> dict:
+    def _build_response(self, 
+                        task_id: str, 
+                        final_status: str, 
+                        results: list, 
+                        call_chain: list,
+                        user_input: str,
+                        session_id="default", 
+                        log_override=None,                   
+                        ) -> dict:
         """拼装 response"""
         if self.builder:
             builder_input = BuilderInput(
@@ -178,4 +182,7 @@ class Agent:
                 call_chain=call_chain,
                 session_id=session_id
             )
-            return self.builder.build(builder_input)
+            output = self.builder.build(builder_input)
+            if self.evaluator:
+                self.evaluator.audit(task_id, user_input, output.frontend_response)
+            return output
