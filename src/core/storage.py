@@ -138,7 +138,7 @@ class Storage:
                     "issues": json.loads(row["issues"]) if row["issues"] else [],
                     "human_feedback": json.loads(row["human_feedback"]) if row["human_feedback"] else None,
                     "created_at": row["created_at"],
-                    "audit_type": row["audits_type"]
+                    "audit_type": row["audit_type"]
                 }
                 for row in rows
             ]

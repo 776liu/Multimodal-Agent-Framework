@@ -47,7 +47,7 @@ class Evaluator:
     def record_feedback(self, 
                         task_id: str, 
                         human_score: float, 
-                        correction: Optional[str]
+                        correction: Optional[str] = None
                         ) -> None:
         try:
             feedback = {"score": human_score}
