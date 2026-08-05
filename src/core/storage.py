@@ -21,7 +21,7 @@ class Storage:
         return conn
 
     def _init_tables(self):
-        """建表：会话元数据 + 对话消息 + 任务日志"""
+        """建表：会话元数据 + 对话消息 + 任务日志 + 审计记录"""
         with self._get_conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions(
@@ -52,8 +52,21 @@ class Storage:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS task_audits(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    audit_type TEXT NOT NULL,
+                    quality_score REAL,
+                    issues TEXT,
+                    human_feedback TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (task_id) REFERENCES task_logs(task_id)
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_session ON task_logs(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_task_audits_task ON task_audits(task_id)")
 
         self._check_columns()
 
@@ -85,6 +98,50 @@ class Storage:
                 (session_id, limit),
             ).fetchall()
             return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+    def save_audit(
+            self, 
+            task_id: str, 
+            audit_type: str, 
+            qulity_score: float, 
+            issues: List[str] = None, 
+            human_feedback: Optional[dict] = None
+        ) -> None:
+        """保存审计报告到task_sudits"""
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "INSERT INTO task_audits(task_id, audit_type, quality_score, issues, human_feedback)"
+                    "VALUES(?, ?, ?, ?, ?)",
+                    (
+                        task_id,
+                        audit_type,
+                        qulity_score,
+                        json.dumps(issues, ensure_ascii=False) if issues else None,
+                        json.dumps(human_feedback, ensure_ascii=False) if human_feedback else None,
+                    ),
+                )
+        except Exception:
+            pass    #静默跳过
+
+    def get_audits(self, task_id: str) -> List[dict]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM task_audits WHERE task_id = ? ORDER BY created_at ASC",
+                (task_id,),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "task_id": row["task_id"],
+                    "quality_score": row["quality_score"],
+                    "issues": json.loads(row["issues"]) if row["issues"] else [],
+                    "human_feedback": json.loads(row["human_feedback"]) if row["human_feedback"] else None,
+                    "created_at": row["created_at"],
+                    "audits_type": row["audits_type"]
+                }
+                for row in rows
+            ]
 
     # ---- 自定义序列化：只存非 None 字段，不依赖 asdict ----
     @staticmethod
