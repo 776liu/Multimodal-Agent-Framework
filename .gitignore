@@ -9,3 +9,7 @@ __pycache__/
 *.egg-info/
 dump.rdb
 CLAUDE.md
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
+frontend/package-lock.json
