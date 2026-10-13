@@ -74,10 +74,27 @@ class Agent:
             while not success:
                 # ROUTING
                 _emit({"stage": "routing", "step": i + 1, "total": total})
-                model_info = self.router.get_model(capability_required, failed_models)
+
+                # 先解析本步实际输入图片（可能来自子任务自带或前序步骤产物），
+                # 再决定路由标签：带图的文本任务走 image-to-text (VLM)
+                call_image_url = subtask.image_url or ""
+                if subtask.reference_step and subtask.reference_step in step_outputs:
+                    call_image_url = step_outputs[subtask.reference_step]
+
+                routing_capability = capability_required
+                if capability_required == "text-generation" and call_image_url:
+                    routing_capability = "image-to-text"
+
+                model_info = self.router.get_model(routing_capability, failed_models)
 
                 if "error" in model_info:
-                    break
+                    # image-to-text 模型耗尽时回退到纯文本池兜底（宁可重试也不直接失败）
+                    if routing_capability == "image-to-text":
+                        model_info = self.router.get_model(
+                            "text-generation", failed_models
+                        )
+                    if "error" in model_info:
+                        break
 
                 # CALLING
                 _emit({
@@ -86,10 +103,6 @@ class Agent:
                     "step": i + 1,
                     "total": total,
                 })
-
-                call_image_url = subtask.image_url or ""
-                if subtask.reference_step and subtask.reference_step in step_outputs:
-                    call_image_url = step_outputs[subtask.reference_step]
 
                 output_type = "text" if capability_required == "text-generation" else "image"
                 response = self.llm_client.call(
