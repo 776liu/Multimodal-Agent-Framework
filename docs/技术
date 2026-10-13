@@ -25,6 +25,35 @@
   
     - 当前方案：新增 _log_planning_failure 方法，在 PLANNING 失败时向 error_summary 写入 {"step": 0, "type": "PLANNING_FAILED", "reason": "..."}，覆盖日志盲区。
 
+4. 会话消息重复写入（Memory 穿透写与 Worker 直写双路径冲突）
+    - 现象：切换到 React 前端后，任意会话的 user 消息与 assistant 结果在 messages 表和前端界面各出现两次；assistant 的两条内容还不同（一条为 URL/文本摘要，一条为完整 JSON）。
+
+    - 根因：同一条消息存在两条持久化路径。Streamlit 时代消息仅由 Memory.add() 写一次即落库（穿透写）；引入异步 Worker 后，Worker 在任务完成时也会 save_message() 直写。Memory 的穿透写未随之摘除，于是每条消息被写两遍。assistant 出现"内容不同的一对"是因为 add_assistant_response 写的是摘要文本，与 Worker 写的完整 JSON 各存一条。
+
+    - 教训：引入新的持久化入口时，必须同步审计旧写入路径并收编，否则形成双写。
+
+    - 当前方案：确立"单一写入者原则"——Memory 仅作进程内热缓存（服务 PLANNING 上下文构建），彻底摘除其穿透写；SQLite 的消息写入统一收口到 Worker（commit cc88812）。历史脏数据按 session+role+content+分钟级时间窗去重清洗。
+
+    - 后续约束：多 Agent 阶段新增 agent_messages 表时，同样只允许 Worker 一个写入者；任何模块需要落库都必须经由 Worker 或显式声明写入豁免。
+
+5. 纯文本模型无法处理图片输入（能力标签粒度不足）
+    - 现象：链式任务（生图→写描述）中，Step 2 的文本生成调用全部返回 400，调用链显示 DeepSeek-V3/Qwen2.5-7B/DeepSeek-R1 连续失败，最终靠 Qwen3-VL 救场，产生多次无效降级。
+
+    - 根因：Router 按能力标签匹配模型，但 text-generation 标签下混装了纯文本模型与视觉语言模型（VLM）。带图输入被路由给纯文本模型时，平台返回 {"code":20041,"message":"The model is not a VLM (Vision Language Model)"}。另外，多个注册名指向同一物理模型时，失败黑名单按注册名生效，同一物理模型被重复重试一次。
+
+    - 当前方案：双管齐下（commit 1b85251 / dfbbcc8）——① Agent 多模态路由：带图输入的文本子任务按 image-to-text 标签路由至 VLM 模型池（Qwen3-VL 32B 主力 + 8B 备选），VLM 耗尽才回退纯文本池；② Router 失败黑名单按物理 model_name 去重。
+
+    - 后续升级：模型注册元数据增加 modalities 字段（input: text|image, output: text|image），由 Router 统一做能力矩阵匹配，替代 Agent 层的特判逻辑。
+
+6. 平台模型生命周期不稳定（聚合平台的下线风险）
+    - 现象：烟测时配置中的 FLUX.1-schnell、Qwen2-VL-72B 均返回 403 {"code":30003,"message":"Model disabled."}。
+
+    - 根因：硅基流动等聚合平台持续跟进开源社区，老旧模型版本下线频繁；而本地配置是静态快照。
+
+    - 当前方案：人工巡检替换为现役模型（Z-Image-Turbo、Qwen3-VL-32B），并在 config/model.yaml 中注释下线原因与实测日期，形成变更记录。
+
+    - 后续升级：启动时对注册模型做健康预检（轻量探活调用），自动标记不可用模型并在 Router 匹配时跳过。
+
 ========================================================================
 架构演进:
 
