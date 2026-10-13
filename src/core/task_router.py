@@ -58,7 +58,7 @@ class TaskRouter:
         model_info = self.router.get_model("text-generation")
 
         full_prompt = SYSTEM_PROMPT + user_input
-    
+
         response = self.llm_client.call(
             model_name = model_info["model_name"],
             endpoint = model_info["endpoint"],
@@ -66,10 +66,18 @@ class TaskRouter:
             prompt = full_prompt,
             output_type = "text"
         )
-        
+
         if response.status == "SUCCESS" :
             try:
-                data = json.loads(response.data.content)
+                # 容错解析：模型有时会用 ```json ... ``` 代码块包裹 JSON，
+                # 剥掉 Markdown 围栏后再解析
+                content = response.data.content.strip()
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                    content = content.strip()
+                data = json.loads(content)
                 subtasks = [Subtask(**s) for s in data["subtasks"]]
                 return ExecutionPlan(
                     intent = data["intent"],
