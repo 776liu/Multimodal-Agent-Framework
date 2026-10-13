@@ -11,6 +11,8 @@ import {
   Copy,
   Layers,
   ChevronRight,
+  Pencil,
+  X,
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -21,12 +23,16 @@ export const Sidebar: React.FC = () => {
     loadSessions,
     selectSession,
     createNewSession,
+    renameSession,
+    deleteSession,
     clearHistory,
   } = useSessionStore();
 
   const isExecuting = useTaskStore((state) => state.isExecuting);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   useEffect(() => {
     loadSessions();
@@ -47,6 +53,20 @@ export const Sidebar: React.FC = () => {
     navigator.clipboard.writeText(currentSessionId);
     setCopiedId(true);
     setTimeout(() => setCopiedId(false), 1500);
+  };
+
+  const startRename = (e: React.MouseEvent, sessionId: string, currentLabel: string) => {
+    e.stopPropagation();
+    setRenamingId(sessionId);
+    setRenameValue(currentLabel === '新对话' ? '' : currentLabel);
+  };
+
+  const commitRename = async () => {
+    if (renamingId && renameValue.trim()) {
+      await renameSession(renamingId, renameValue);
+    }
+    setRenamingId(null);
+    setRenameValue('');
   };
 
   return (
@@ -126,10 +146,11 @@ export const Sidebar: React.FC = () => {
         ) : (
           filteredSessions.map((session) => {
             const isActive = session.session_id === currentSessionId;
+            const isRenaming = renamingId === session.session_id;
             return (
               <div
                 key={session.session_id}
-                onClick={() => selectSession(session.session_id)}
+                onClick={() => !isRenaming && selectSession(session.session_id)}
                 className={`group relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all ${
                   isActive
                     ? 'bg-indigo-50/80  text-indigo-950  border border-indigo-200/80  shadow-xs'
@@ -143,12 +164,76 @@ export const Sidebar: React.FC = () => {
                       : 'text-slate-400 group-hover:text-slate-600 '
                   }`}
                 />
-                <span className="truncate flex-1 font-normal tracking-tight">
-                  {session.label || session.session_id}
-                </span>
 
-                {isActive && (
-                  <ChevronRight className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                {isRenaming ? (
+                  // 重命名输入态
+                  <div className="flex-1 flex items-center gap-1">
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename();
+                        if (e.key === 'Escape') setRenamingId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="输入会话名称..."
+                      className="flex-1 min-w-0 px-1.5 py-0.5 text-xs border border-indigo-400 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        commitRename();
+                      }}
+                      title="确认"
+                      className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenamingId(null);
+                      }}
+                      title="取消"
+                      className="p-0.5 text-slate-400 hover:bg-slate-200 rounded"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="truncate flex-1 font-normal tracking-tight">
+                      {session.label || session.session_id}
+                    </span>
+
+                    {/* hover 操作：重命名 / 删除 */}
+                    <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                      <button
+                        onClick={(e) => startRename(e, session.session_id, session.label)}
+                        title="重命名"
+                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`确定删除会话「${session.label || session.session_id}」吗？\n该操作将级联删除全部消息、任务日志与审计记录，不可恢复。`)) {
+                            deleteSession(session.session_id);
+                          }
+                        }}
+                        title="删除会话"
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {isActive && !isRenaming && (
+                      <ChevronRight className="w-3.5 h-3.5 text-indigo-500 shrink-0 group-hover:hidden" />
+                    )}
+                  </>
                 )}
               </div>
             );

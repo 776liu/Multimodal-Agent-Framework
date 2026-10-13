@@ -58,6 +58,8 @@ class Worker:
                         session_id, "assistant",
                         json.dumps(frontend.get("data", {}), ensure_ascii=False),
                     )
+                    # 标签回填：会话标签仍为默认值时，用首条用户消息作为标签
+                    self.storage.backfill_session_label(session_id, user_input)
                     self.storage.save_task_log(
                         task_id,
                         session_id,
