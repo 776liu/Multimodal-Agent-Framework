@@ -57,7 +57,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
       <div
         className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-semibold select-none shadow-xs ${
           isUser
-            ? 'bg-slate-900 text-white dark:bg-slate-800 dark:text-slate-100 ring-1 ring-slate-700/20'
+            ? 'bg-slate-900 text-white ring-1 ring-slate-700/20'
             : 'bg-indigo-600 text-white shadow-indigo-600/20 ring-1 ring-indigo-500/30'
         }`}
       >
@@ -66,7 +66,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
 
       {/* Bubble Content Body */}
       <div className={`max-w-[82%] sm:max-w-[76%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-        <div className="flex items-center gap-2 mb-1 px-0.5 text-[11px] text-slate-400 dark:text-slate-500 font-medium">
+        <div className="flex items-center gap-2 mb-1 px-0.5 text-[11px] text-slate-400 font-medium">
           <span>{isUser ? '用户指令' : 'Agent 编排流水线'}</span>
           {message.created_at && (
             <span className="text-[10px] text-slate-400 font-mono">
@@ -76,11 +76,11 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
         </div>
 
         {isUser ? (
-          <div className="bg-slate-900 dark:bg-slate-800 text-white px-4 py-2.5 rounded-2xl rounded-tr-xs text-xs sm:text-sm leading-relaxed whitespace-pre-wrap shadow-xs border border-slate-800 dark:border-slate-700/70 selection:bg-indigo-500 selection:text-white">
+          <div className="bg-slate-900 text-white px-4 py-2.5 rounded-2xl rounded-tr-xs text-xs sm:text-sm leading-relaxed whitespace-pre-wrap shadow-xs border border-slate-800 selection:bg-indigo-500 selection:text-white">
             {message.content}
           </div>
         ) : (
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-100 p-4 rounded-2xl rounded-tl-xs text-xs sm:text-sm shadow-xs space-y-3 w-full">
+          <div className="bg-white border border-slate-200/80 text-slate-800 p-4 rounded-2xl rounded-tl-xs text-xs sm:text-sm shadow-xs space-y-3 w-full">
             {parsedContent?.results ? (
               <div className="space-y-4">
                 {parsedContent.results.map((item, idx) => {
@@ -88,18 +88,18 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
                     return (
                       <div key={idx} className="space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2.5 py-1 rounded-md border border-indigo-200/60 dark:border-indigo-800/60">
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200/60">
                             <ImageIcon className="w-3.5 h-3.5" />
                             <span>多模态视觉生成工件 (Image Artifact)</span>
                           </div>
-                          <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/40 flex items-center gap-1">
+                          <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
                             质检核验通过
                           </span>
                         </div>
 
                         {/* Image Viewer Card */}
-                        <div className="relative group/img rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 shadow-xs">
+                        <div className="relative group/img rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shadow-xs">
                           <img
                             src={item.url}
                             alt="Generated Artifact"
@@ -135,12 +135,12 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
                     <div key={idx} className="space-y-1.5">
                       {item.type && item.type !== 'text' && (
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-mono font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                          <span className="text-[10px] font-mono font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                             {item.type}
                           </span>
                         </div>
                       )}
-                      <div className="whitespace-pre-wrap leading-relaxed text-slate-800 dark:text-slate-200">
+                      <div className="whitespace-pre-wrap leading-relaxed text-slate-800">
                         {item.content}
                       </div>
                     </div>
@@ -148,23 +148,23 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
                 })}
               </div>
             ) : parsedContent?.message ? (
-              <div className="text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-lg border border-amber-200/80 dark:border-amber-800/40 text-xs">
+              <div className="text-amber-800 bg-amber-50 p-3 rounded-lg border border-amber-200/80 text-xs">
                 {parsedContent.message}
               </div>
             ) : (
-              <div className="whitespace-pre-wrap leading-relaxed text-slate-800 dark:text-slate-200">
+              <div className="whitespace-pre-wrap leading-relaxed text-slate-800">
                 {message.content}
               </div>
             )}
 
             {/* Bubble Footer Action Toolbar */}
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
               <span className="font-mono text-[10px] text-slate-400">
                 Agent Output Verification: Pass
               </span>
               <button
                 onClick={() => handleCopyText(message.content)}
-                className="flex items-center gap-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors p-1 rounded hover:bg-slate-50 dark:hover:bg-slate-800"
+                className="flex items-center gap-1 text-slate-400 hover:text-slate-700 transition-colors p-1 rounded hover:bg-slate-50"
                 title="复制消息内容"
               >
                 {copied ? (

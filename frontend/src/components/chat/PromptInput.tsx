@@ -98,7 +98,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
       <div className="max-w-4xl mx-auto flex flex-col gap-2">
         {/* Floating Recommendation Chips (悬浮在输入框正上方) */}
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
-          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 shrink-0 select-none">
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 shrink-0 select-none">
             <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
             <span>推荐灵感:</span>
           </div>
@@ -108,7 +108,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
               key={idx}
               onClick={() => setText(item.prompt)}
               disabled={disabled}
-              className="group flex items-center gap-1.5 text-xs bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 px-3 py-1.5 rounded-full shrink-0 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm hover:border-indigo-400/60 dark:hover:border-indigo-600/60 backdrop-blur-md transition-all active:scale-95 disabled:opacity-40"
+              className="group flex items-center gap-1.5 text-xs bg-white/90 hover:bg-white text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-full shrink-0 border border-slate-200/80 shadow-xs hover:shadow-sm hover:border-indigo-400/60 backdrop-blur-md transition-all active:scale-95 disabled:opacity-40"
             >
               {getCategoryIcon(item.category)}
               <span className="font-medium tracking-tight">{item.label}</span>
@@ -117,7 +117,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
         </div>
 
         {/* DSH-style Rounded Rectangle Input Card (大圆角长方形输入卡片) */}
-        <div className="group/input relative flex flex-col bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 rounded-2xl sm:rounded-3xl shadow-md shadow-slate-200/40 dark:shadow-slate-950/60 focus-within:border-indigo-500/80 dark:focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/15 transition-all overflow-hidden">
+        <div className="group/input relative flex flex-col bg-white border border-slate-200/90 rounded-2xl sm:rounded-3xl shadow-md shadow-slate-200/40 focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/15 transition-all overflow-hidden">
           {/* Text Area Input */}
           <div className="px-4 pt-3.5 pb-1 relative">
             <textarea
@@ -128,7 +128,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
               placeholder="向多模态协同 Agent 发送自然语言指令... (Enter 发送, Shift+Enter 换行)"
               disabled={disabled}
               rows={1}
-              className="w-full bg-transparent resize-none outline-none text-xs sm:text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 max-h-[200px] disabled:opacity-60 leading-relaxed font-sans"
+              className="w-full bg-transparent resize-none outline-none text-xs sm:text-sm text-slate-800 placeholder-slate-400 max-h-[200px] disabled:opacity-60 leading-relaxed font-sans"
             />
           </div>
 
@@ -136,7 +136,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
           <div className="flex items-center justify-between px-3.5 pb-2.5 pt-1 select-none">
             {/* Left Status & Clear */}
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium bg-slate-100/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 rounded-lg border border-slate-200/50 dark:border-slate-700/50">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium bg-slate-100/80 text-slate-600 rounded-lg border border-slate-200/50">
                 <Layers className="w-3 h-3 text-indigo-500" />
                 <span>多模态协同流</span>
               </span>
@@ -145,7 +145,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
                 <button
                   onClick={() => setText('')}
                   title="清空当前输入"
-                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors px-1.5 py-0.5 rounded hover:bg-slate-100"
                 >
                   <X className="w-3 h-3" />
                   <span>清空</span>
@@ -155,14 +155,14 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
 
             {/* Right Quick Info & Send Action */}
             <div className="flex items-center gap-2.5">
-              <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline">
+              <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">
                 Enter 发送
               </span>
 
               <button
                 onClick={handleSubmit}
                 disabled={disabled || !text.trim()}
-                className="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white transition-all shadow-xs shadow-indigo-600/30 disabled:opacity-30 disabled:pointer-events-none disabled:bg-slate-300 dark:disabled:bg-slate-800 shrink-0"
+                className="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white transition-all shadow-xs shadow-indigo-600/30 disabled:opacity-30 disabled:pointer-events-none disabled:bg-slate-300 shrink-0"
                 title="发送指令"
               >
                 {disabled ? (
@@ -176,7 +176,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
         </div>
 
         {/* Micro Subtitle note */}
-        <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500 px-2">
+        <div className="flex items-center justify-between text-[11px] text-slate-400 px-2">
           <span className="flex items-center gap-1.5">
             <Zap className="w-3 h-3 text-emerald-500" />
             <span>智能体将自动识别意图、路由模型并执行合规质检</span>
