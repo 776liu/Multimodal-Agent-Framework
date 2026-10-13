@@ -70,6 +70,7 @@ class Agent:
             prompt = subtask.prompt
             failed_models = []
             success = False
+            _no_model_reason = None
 
             while not success:
                 # ROUTING
@@ -94,6 +95,19 @@ class Agent:
                             "text-generation", failed_models
                         )
                     if "error" in model_info:
+                        # 无模型可用：写入语义化失败原因，不再让 Builder 输出
+                        # 笼统的"服务暂时不可用"
+                        _no_model_reason = (
+                            f"步骤{i + 1}需要能力[{routing_capability}]，"
+                            "但模型注册表中无可用模型（未配置或已全部失败）"
+                        )
+                        call_chain.append(CallChainEntry(
+                            model_name="(no-model-available)",
+                            capability=routing_capability,
+                            status="FAILED",
+                            error_code=-2,
+                            attempted_at=str(time.time()),
+                        ))
                         break
 
                 # CALLING
@@ -159,7 +173,28 @@ class Agent:
                         self.memory.add_assistant_response(session_id, results)
                     return self._build_response(task_id, "PARTIAL_SUCCESS", results, call_chain, user_input)
                 else:
-                    return self._build_response(task_id, "FAILED", results, call_chain, user_input)
+                    # 无任何产物时，把具体失败原因注入日志（前端可见）
+                    log_override = None
+                    if _no_model_reason:
+                        log_override = {
+                            "task_id": task_id,
+                            "timestamp": str(time.time()),
+                            "task_status": "FAILED",
+                            "system_status": "READY",
+                            "call_chain": [
+                                {"model_name": c.model_name, "capability": c.capability,
+                                 "status": c.status, "error_code": c.error_code,
+                                 "attempted_at": c.attempted_at}
+                                for c in call_chain
+                            ],
+                            "error_summary": [{
+                                "step": i + 1,
+                                "type": "NO_AVAILABLE_MODEL",
+                                "capability": routing_capability,
+                                "reason": _no_model_reason,
+                            }],
+                        }
+                    return self._build_response(task_id, "FAILED", results, call_chain, user_input, log_override=log_override)
 
         if self.memory:
             self.memory.add_assistant_response(session_id, results)
