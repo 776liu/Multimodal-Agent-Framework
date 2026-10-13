@@ -97,7 +97,7 @@ redis-server
 ### 4. 启动后端
 
 ```bash
-uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn src.api.main:app --host 127.0.0.1 --port 8100 --reload
 ```
 
 ### 5. 启动前端

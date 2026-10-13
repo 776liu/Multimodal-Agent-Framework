@@ -49,7 +49,7 @@ def load_app_config(config_path: str = None) -> dict:
             config = {}
     app = config.get("app", {}) if config else {}
     return {
-        "api_base": app.get("api_base", "http://127.0.0.1:8000"),
+        "api_base": app.get("api_base", "http://127.0.0.1:8100"),
         "poll_interval": app.get("poll_interval", 2),
         "timeout_seconds": app.get("timeout_seconds", 180),
     }
