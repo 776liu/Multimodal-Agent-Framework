@@ -42,45 +42,58 @@ class LLMClient:
             }
             timeout = 60
         elif output_type == "image":
-            # 原生 API 同步模式：payload 有 input 包装，timeout 拉大
             url = endpoint
-            if image_url:
-                # 图生图模式：只传参考图，不混用 text
-                payload = {"model": model_name,
-                    "input": {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [{"image": image_url}]
-                            }
-                        ]
-                    },
-                    "parameters": {
-                        "n": 1,
-                        "watermark": False
-                    }
-                }
-            else:
-                payload = {
-                    "model": model_name,
-                    "input": {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [{"text": prompt}]
-                            }
-                        ]
-                    },
-                    "parameters": {
-                        "n": 1,
-                        "watermark": False
-                    }
-                }
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
-            timeout = 300
+            if "images/generations" in endpoint:
+                # OpenAI Images 兼容协议 (硅基流动等)：
+                # POST {prompt, image_size}, 响应 {"images": [{"url": "..."}]}
+                payload = {
+                    "model": model_name,
+                    "prompt": prompt,
+                    "image_size": "1024x1024"
+                }
+                timeout = 60
+                response_style = "openai_images"
+            else:
+                # DashScope 原生异步接口的同步模式 (阿里云百炼)：
+                # payload 有 input 包装, 响应有 output 前缀
+                if image_url:
+                    # 图生图模式：只传参考图，不混用 text
+                    payload = {"model": model_name,
+                        "input": {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [{"image": image_url}]
+                                }
+                            ]
+                        },
+                        "parameters": {
+                            "n": 1,
+                            "watermark": False
+                        }
+                    }
+                else:
+                    payload = {
+                        "model": model_name,
+                        "input": {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [{"text": prompt}]
+                                }
+                            ]
+                        },
+                        "parameters": {
+                            "n": 1,
+                            "watermark": False
+                        }
+                    }
+                timeout = 300
+                response_style = "dashscope"
         else:
             return LLMResponse(
                 status="FAILED",
@@ -123,8 +136,12 @@ class LLMClient:
             )
 
         elif output_type == "image":
-            # 原生 API 响应：有 output 前缀
-            image_url = data["output"]["choices"][0]["message"]["content"][0]["image"]
+            if response_style == "openai_images":
+                # OpenAI Images 兼容协议响应：{"images": [{"url": "..."}]}
+                image_url = data["images"][0]["url"]
+            else:
+                # DashScope 原生响应：output.choices[0].message.content[0].image
+                image_url = data["output"]["choices"][0]["message"]["content"][0]["image"]
             return LLMResponse(
                 status="SUCCESS",
                 data=TaskResult(type="image", url=image_url),
