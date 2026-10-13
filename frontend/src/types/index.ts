@@ -74,7 +74,15 @@ export interface SessionInfo {
 export interface SessionHistoryResponse {
   session_id: string;
   messages: MessageItem[];
-  tasks: Array<Record<string, unknown>>;
+  tasks: Array<{
+    task_id: string;
+    task_status: string;
+    created_at?: string;
+    user_input?: string;
+    summary?: TaskResultItem[];
+    call_chain?: CallChainEntry[];
+    error_summary?: Array<{ model_name: string; capability: string; error_code?: number | null }>;
+  }>;
 }
 
 export interface SessionTasksResponse {

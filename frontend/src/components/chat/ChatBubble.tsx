@@ -10,13 +10,15 @@ import {
   Check,
   Download,
   CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface ChatBubbleProps {
   message: MessageItem;
+  taskStatus?: string;
 }
 
-export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
+export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, taskStatus }) => {
   const isUser = message.role === 'user';
   const [modalImage, setModalImage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -71,6 +73,20 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
           {message.created_at && (
             <span className="text-[10px] text-slate-400 font-mono">
               {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          )}
+          {/* 任务终态角标：区分全量成功与部分成功（降级交付） */}
+          {!isUser && taskStatus === 'PARTIAL_SUCCESS' && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-300/70"
+              title="部分子任务失败，已交付可用产物"
+            >
+              <AlertTriangle className="w-3 h-3" /> 部分成功·降级交付
+            </span>
+          )}
+          {!isUser && taskStatus === 'SUCCESS' && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200/70">
+              <CheckCircle2 className="w-3 h-3" /> 全链路成功
             </span>
           )}
         </div>

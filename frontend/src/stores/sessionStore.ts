@@ -1,11 +1,22 @@
 import { create } from 'zustand';
 import { sessionApi } from '../api/session';
-import type { SessionInfo, MessageItem } from '../types';
+import type { SessionInfo, MessageItem, CallChainEntry } from '../types';
+
+/** 会话内单条任务的历史视图（供观测看板回放调用链） */
+export interface SessionTaskHistoryItem {
+  task_id: string;
+  task_status: string;
+  created_at?: string;
+  user_input?: string;
+  call_chain?: CallChainEntry[];
+  error_summary?: Array<{ model_name: string; capability: string; error_code?: number | null }>;
+}
 
 interface SessionState {
   sessions: SessionInfo[];
   currentSessionId: string;
   messages: MessageItem[];
+  sessionTasks: SessionTaskHistoryItem[];
   isLoadingSessions: boolean;
   isLoadingHistory: boolean;
 
@@ -23,6 +34,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   currentSessionId: 'default',
   messages: [],
+  sessionTasks: [],
   isLoadingSessions: false,
   isLoadingHistory: false,
 
@@ -52,10 +64,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ currentSessionId: sessionId, isLoadingHistory: true });
     try {
       const history = await sessionApi.getSessionHistory(sessionId);
-      set({ messages: history.messages || [] });
+      set({
+        messages: history.messages || [],
+        // 切换会话时重建该会话的任务调用链历史（观测看板回放数据源）
+        sessionTasks: history.tasks || [],
+      });
     } catch (err) {
       console.error(`Failed to load history for session ${sessionId}:`, err);
-      set({ messages: [] });
+      set({ messages: [], sessionTasks: [] });
     } finally {
       set({ isLoadingHistory: false });
     }

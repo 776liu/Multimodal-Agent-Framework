@@ -312,16 +312,17 @@ class Storage:
             return row["content"] if row else "新对话"
 
     def get_task_history(self, session_id: str, limit: int = 10) -> List[dict]:
-        """获取某个会话的任务历史（最近 N 条，含 user_input 供前端恢复）"""
+        """获取某个会话的任务历史（最近 N 条，含 user_input 与调用链，供前端恢复/回放）"""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT task_id, task_status, frontend_json, user_input, created_at "
+                "SELECT task_id, task_status, frontend_json, log_json, user_input, created_at "
                 "FROM task_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
                 (session_id, limit),
             ).fetchall()
             result = []
             for row in rows:
                 frontend = json.loads(row["frontend_json"] or "{}")
+                log = json.loads(row["log_json"] or "{}")
                 results_data = frontend.get("data", {})
                 result.append({
                     "task_id": row["task_id"],
@@ -329,6 +330,8 @@ class Storage:
                     "created_at": row["created_at"],
                     "user_input": row["user_input"] or "",
                     "summary": results_data.get("results", []),
+                    "call_chain": log.get("call_chain", []),
+                    "error_summary": log.get("error_summary", []),
                 })
             return result
 
