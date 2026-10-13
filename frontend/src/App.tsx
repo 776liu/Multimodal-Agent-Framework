@@ -7,7 +7,7 @@ export const App: React.FC = () => {
   const [inspectorOpen, setInspectorOpen] = useState(true);
 
   return (
-    <div className="flex min-h-[100dvh] h-[100dvh] w-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased font-sans">
+    <div className="flex min-h-[100dvh] h-[100dvh] w-screen overflow-hidden bg-slate-50 text-slate-800 antialiased font-sans">
       {/* Column 1: Sessions Sidebar */}
       <Sidebar />
 
