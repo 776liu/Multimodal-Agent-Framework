@@ -21,7 +21,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   inspectorOpen,
   onToggleInspector,
 }) => {
-  const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession } =
+  const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession, refreshSessionLabel } =
     useSessionStore();
   const { isExecuting, activeTaskId, submitTask, error } = useTaskStore();
 
@@ -47,6 +47,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     if (res?.result?.frontend_response) {
       // 重新拉取完整后端消息同步
       await selectSession(currentSessionId);
+      // 首条消息后 Worker 可能已回填会话标签，刷新左侧列表
+      await refreshSessionLabel();
     }
   };
 

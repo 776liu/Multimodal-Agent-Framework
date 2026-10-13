@@ -82,6 +82,15 @@ class Storage:
                 with self._get_conn() as conn:
                     conn.execute(f"ALTER TABLE task_logs ADD COLUMN {col} TEXT")
 
+        with self._get_conn() as conn:
+            session_cols = {
+                row["name"] for row in
+                conn.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+        if "updated_at" not in session_cols:
+            with self._get_conn() as conn:
+                conn.execute("ALTER TABLE sessions ADD COLUMN updated_at TIMESTAMP")
+
     def save_message(self, session_id: str, role: str, content: str) -> None:
         """保存单条对话消息"""
         with self._get_conn() as conn:
@@ -197,6 +206,41 @@ class Storage:
                 (session_id, label),
             )
 
+    def ensure_session(self, session_id: str, label: str = "新对话") -> bool:
+        """会话不存在时登记（submit 兜底调用），已存在则不动。返回是否新登记"""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        if row is None:
+            self.save_session(session_id, label)
+            return True
+        return False
+
+    def rename_session(self, session_id: str, label: str) -> bool:
+        """重命名会话。会话不存在返回 False"""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET label = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE session_id = ?",
+                (label, session_id),
+            )
+            return cur.rowcount > 0
+
+    def get_session_label(self, session_id: str) -> Optional[str]:
+        """读取会话当前标签；会话未登记返回 None"""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT label FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return row["label"] if row else None
+
+    def backfill_session_label(self, session_id: str, user_input: str) -> None:
+        """用首条用户消息回填会话标签（仅当仍为默认'新对话'，不覆盖用户自定义名）"""
+        label = self.get_session_label(session_id)
+        if label == "新对话" and user_input:
+            self.rename_session(session_id, user_input[:30])
+
 
     def delete_messages(self, session_id:str)-> None:
         """删除某个会话的全部消息"""
@@ -209,11 +253,20 @@ class Storage:
             conn.execute("DELETE FROM task_logs WHERE session_id = ?", (session_id,))
 
     def delete_session_data(self, session_id: str) -> None:
-        """删除会话相关的全部持久数据"""
+        """删除会话相关的全部持久数据（含会话元数据与审计记录）"""
         with self._get_conn() as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM task_logs WHERE session_id = ?", (session_id,))
+
+    def delete_session_audits(self, session_id: str) -> None:
+        """删除会话下所有任务的审计记录（task_audits 以 task_id 关联，需先取任务ID）"""
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM task_audits WHERE task_id IN "
+                "(SELECT task_id FROM task_logs WHERE session_id = ?)",
+                (session_id,),
+            )
 
     def list_sessions(self) -> List[dict]:
         """列出所有会话,按创建时间降序。返回 [{session_id, label, created_at}]"""
