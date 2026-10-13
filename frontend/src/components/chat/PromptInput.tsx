@@ -1,15 +1,53 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Loader2 } from 'lucide-react';
+import {
+  ArrowUp,
+  Sparkles,
+  Loader2,
+  X,
+  Palette,
+  Compass,
+  FileText,
+  Layers,
+  Zap,
+} from 'lucide-react';
 
 interface PromptInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
 }
 
-const PRESETS = [
-  '生成一张赛博朋克风格的雨夜霓虹街道图片',
-  '将人工智能多模态 Agent 架构的核心优势写一段 150 字简评',
-  '生成一张未来火星基地的概念图，并写一段探险日记',
+interface PresetOption {
+  label: string;
+  category: 'image' | 'plan' | 'summary';
+  prompt: string;
+}
+
+const PRESET_OPTIONS: PresetOption[] = [
+  {
+    label: '雨夜霓虹赛博街道',
+    category: 'image',
+    prompt: '生成一张赛博朋克风格的雨夜霓虹街道图片，电影级光影与反光水洼',
+  },
+  {
+    label: '火星基地与探险记',
+    category: 'plan',
+    prompt: '生成一张未来火星基地的概念图，并写一段探险日记',
+  },
+  {
+    label: '多模态 Agent 优势评析',
+    category: 'summary',
+    prompt: '将人工智能多模态 Agent 架构的核心优势写一段 150 字精练评析',
+  },
+  {
+    label: '极简北欧空间渲染',
+    category: 'image',
+    prompt: '生成一张极简主义北欧阳光客厅设计图，原木与绿植，8K 质感',
+  },
+  {
+    label: '多智能体质检机制',
+    category: 'summary',
+    prompt: '详细说明多模态 Agent 框架中 Evaluator 质检器的工作原理与校验规则',
+  },
 ];
 
 export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) => {
@@ -22,7 +60,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(
         textareaRef.current.scrollHeight,
-        180
+        200
       )}px`;
     }
   }, [text]);
@@ -44,55 +82,107 @@ export const PromptInput: React.FC<PromptInputProps> = ({ onSend, disabled }) =>
     }
   };
 
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'image':
+        return <Palette className="w-3.5 h-3.5 text-indigo-500" />;
+      case 'plan':
+        return <Compass className="w-3.5 h-3.5 text-emerald-500" />;
+      default:
+        return <FileText className="w-3.5 h-3.5 text-blue-500" />;
+    }
+  };
+
   return (
-    <div className="w-full bg-white border-t border-surface-border p-4 shadow-sm">
-      {/* Preset Quick Chips */}
-      <div className="max-w-4xl mx-auto mb-3 flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-        <span className="text-[11px] font-semibold text-slate-400 shrink-0 flex items-center gap-1">
-          <Sparkles className="w-3 h-3 text-brand-500" />
-          快捷提示词:
-        </span>
-        {PRESETS.map((preset, idx) => (
-          <button
-            key={idx}
-            onClick={() => setText(preset)}
-            disabled={disabled}
-            className="text-xs bg-slate-100 hover:bg-brand-50 text-slate-600 hover:text-brand-700 px-3 py-1.5 rounded-full shrink-0 border border-slate-200/60 transition-colors disabled:opacity-50"
-          >
-            {preset}
-          </button>
-        ))}
-      </div>
+    <div className="w-full pb-4 px-4 sm:px-6 relative z-20 pointer-events-auto transition-colors duration-200">
+      <div className="max-w-4xl mx-auto flex flex-col gap-2">
+        {/* Floating Recommendation Chips (悬浮在输入框正上方) */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 shrink-0 select-none">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+            <span>推荐灵感:</span>
+          </div>
 
-      {/* Input Form */}
-      <div className="max-w-4xl mx-auto relative flex items-end gap-2 bg-slate-50 border border-slate-200/80 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-brand-500/20 focus-within:border-brand-500 transition-all shadow-inner">
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="向 Agent 发送指令... (Enter 发送, Shift+Enter 换行)"
-          disabled={disabled}
-          rows={1}
-          className="w-full bg-transparent resize-none outline-none text-sm text-slate-800 placeholder-slate-400 px-2 py-1 max-h-[180px] disabled:opacity-60"
-        />
+          {PRESET_OPTIONS.map((item, idx) => (
+            <button
+              key={idx}
+              onClick={() => setText(item.prompt)}
+              disabled={disabled}
+              className="group flex items-center gap-1.5 text-xs bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 px-3 py-1.5 rounded-full shrink-0 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm hover:border-indigo-400/60 dark:hover:border-indigo-600/60 backdrop-blur-md transition-all active:scale-95 disabled:opacity-40"
+            >
+              {getCategoryIcon(item.category)}
+              <span className="font-medium tracking-tight">{item.label}</span>
+            </button>
+          ))}
+        </div>
 
-        <button
-          onClick={handleSubmit}
-          disabled={disabled || !text.trim()}
-          className="p-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 active:scale-95 text-white transition-all shadow-md shadow-brand-500/20 disabled:opacity-40 disabled:pointer-events-none shrink-0"
-        >
-          {disabled ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Send className="w-4 h-4" />
-          )}
-        </button>
-      </div>
+        {/* DSH-style Rounded Rectangle Input Card (大圆角长方形输入卡片) */}
+        <div className="group/input relative flex flex-col bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 rounded-2xl sm:rounded-3xl shadow-md shadow-slate-200/40 dark:shadow-slate-950/60 focus-within:border-indigo-500/80 dark:focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/15 transition-all overflow-hidden">
+          {/* Text Area Input */}
+          <div className="px-4 pt-3.5 pb-1 relative">
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="向多模态协同 Agent 发送自然语言指令... (Enter 发送, Shift+Enter 换行)"
+              disabled={disabled}
+              rows={1}
+              className="w-full bg-transparent resize-none outline-none text-xs sm:text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 max-h-[200px] disabled:opacity-60 leading-relaxed font-sans"
+            />
+          </div>
 
-      <div className="max-w-4xl mx-auto mt-2 flex items-center justify-between text-[11px] text-slate-400 px-1">
-        <span>支持纯文本交互、图像生成以及链式多模态任务拆解</span>
-        <span>按 Enter 发送</span>
+          {/* Bottom Toolbar inside the Rounded Card */}
+          <div className="flex items-center justify-between px-3.5 pb-2.5 pt-1 select-none">
+            {/* Left Status & Clear */}
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium bg-slate-100/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 rounded-lg border border-slate-200/50 dark:border-slate-700/50">
+                <Layers className="w-3 h-3 text-indigo-500" />
+                <span>多模态协同流</span>
+              </span>
+
+              {text && !disabled && (
+                <button
+                  onClick={() => setText('')}
+                  title="清空当前输入"
+                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <X className="w-3 h-3" />
+                  <span>清空</span>
+                </button>
+              )}
+            </div>
+
+            {/* Right Quick Info & Send Action */}
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline">
+                Enter 发送
+              </span>
+
+              <button
+                onClick={handleSubmit}
+                disabled={disabled || !text.trim()}
+                className="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white transition-all shadow-xs shadow-indigo-600/30 disabled:opacity-30 disabled:pointer-events-none disabled:bg-slate-300 dark:disabled:bg-slate-800 shrink-0"
+                title="发送指令"
+              >
+                {disabled ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Micro Subtitle note */}
+        <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500 px-2">
+          <span className="flex items-center gap-1.5">
+            <Zap className="w-3 h-3 text-emerald-500" />
+            <span>智能体将自动识别意图、路由模型并执行合规质检</span>
+          </span>
+          <span className="font-mono text-[10px]">Multimodal Framework</span>
+        </div>
       </div>
     </div>
   );
