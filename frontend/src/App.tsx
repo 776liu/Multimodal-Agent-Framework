@@ -8,8 +8,8 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex min-h-[100dvh] h-[100dvh] w-screen overflow-hidden bg-slate-50 text-slate-800 antialiased font-sans">
-      {/* Column 1: Sessions Sidebar */}
-      <Sidebar />
+      {/* Column 1: Sessions Sidebar (固定宽度，内容自动换行适配) */}
+      <Sidebar width={288} />
 
       {/* Column 2: Chat & Workspace Area */}
       <ChatArea

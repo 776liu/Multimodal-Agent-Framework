@@ -15,7 +15,11 @@ import {
   X,
 } from 'lucide-react';
 
-export const Sidebar: React.FC = () => {
+interface SidebarProps {
+  width: number;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ width }) => {
   const {
     sessions,
     currentSessionId,
@@ -70,7 +74,10 @@ export const Sidebar: React.FC = () => {
   };
 
   return (
-    <aside className="w-72 bg-white border-r border-slate-200/80 flex flex-col h-full select-none shrink-0 transition-colors duration-200">
+    <aside
+      className="bg-white border-r border-slate-200/80 flex flex-col h-full select-none shrink-0 transition-colors duration-200 relative"
+      style={{ width }}
+    >
       {/* Brand Header */}
       <div className="p-4 border-b border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-3">
