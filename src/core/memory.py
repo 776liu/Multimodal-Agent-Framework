@@ -12,11 +12,11 @@ class Memory:
 
 
     def add(self, session_id: str, role: str, content: str) ->None:
-        """添加一条消息到会话"""
+        """添加一条消息到进程内缓存。
 
-        if self.storage:
-            self.storage.save_message(session_id, role, content)
-
+        注意：这里不再写 Storage——持久化由 Worker 统一直写（单一写入者原则），
+        避免 Agent 与 Worker 双路径各写一次导致消息重复。
+        """
         if session_id not in self.sessions:
             self.sessions[session_id] = []
         self.sessions[session_id].append(Messages(role=role, content=content))
