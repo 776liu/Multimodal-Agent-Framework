@@ -31,7 +31,6 @@ export const AgentInspector: React.FC = () => {
   const currentTask = useTaskStore((state) => state.currentTask);
   const isExecuting = useTaskStore((state) => state.isExecuting);
   const sessionTasks = useSessionStore((state) => state.sessionTasks);
-  const [promptExpanded, setPromptExpanded] = useState(false);
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false);
   // null = 展示实时任务; 数字 = 展示历史任务列表中的第 n 个
   const [selectedHistoryIdx, setSelectedHistoryIdx] = useState<number | null>(null);
@@ -290,28 +289,9 @@ export const AgentInspector: React.FC = () => {
               <span className="text-[11px] font-medium text-slate-400">
                 用户指令输入
               </span>
-              <p
-                className={`text-xs text-slate-700 font-normal mt-1 bg-white p-2 rounded-lg border border-slate-200/60 leading-relaxed break-words whitespace-pre-wrap cursor-pointer hover:border-indigo-300 transition-colors ${
-                  promptExpanded ? '' : 'line-clamp-3'
-                }`}
-                onClick={() => setPromptExpanded((prev) => !prev)}
-                title={promptExpanded ? '点击收起' : '点击展开全文'}
-              >
+              <p className="text-xs text-slate-700 font-normal mt-1 bg-white p-2 rounded-lg border border-slate-200/60 leading-relaxed break-words whitespace-pre-wrap select-none">
                 {view.userInput || '（历史任务未记录输入）'}
               </p>
-              {(view.userInput || '').length > 60 && (
-                <button
-                  onClick={() => setPromptExpanded((prev) => !prev)}
-                  className="mt-1 flex items-center gap-0.5 text-[10px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
-                >
-                  <span>{promptExpanded ? '收起' : '展开全文'}</span>
-                  <ChevronDown
-                    className={`w-3 h-3 transition-transform ${
-                      promptExpanded ? 'rotate-180' : ''
-                    }`}
-                  />
-                </button>
-              )}
             </div>
           </div>
         ) : (
