@@ -35,15 +35,23 @@ class Router:
 
         available = [m for m in candidates if m.registered_name not in failed_models]
 
+        # 按物理模型去重：多个注册名可指向同一个 model_name（如同一模型配置
+        # 主备两条），失败黑名单按物理模型生效，避免同一模型被重复重试
+        tried_physical = {
+            c.model_name for c in candidates
+            if c.registered_name in failed_models
+        }
+        available = [m for m in available if m.model_name not in tried_physical]
+
         if available:
-            model = available[0]  
+            model = available[0]
             return {
                 "registered_name": model.registered_name,
                 "model_name": model.model_name,
                 "endpoint": model.endpoint,
                 "api_key": model.api_key
                 }
-        
+
         return {"error": "NO_AVAILABLE_MODEL"}
     
     # 临时方案：在 router.py 里加一个脱敏函数
