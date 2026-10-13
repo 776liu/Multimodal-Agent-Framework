@@ -21,7 +21,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   inspectorOpen,
   onToggleInspector,
 }) => {
-  const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession, refreshSessionLabel } =
+  const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession, refreshSessionLabel, sessionTasks } =
     useSessionStore();
   const { isExecuting, activeTaskId, submitTask, error } = useTaskStore();
 
@@ -123,9 +123,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <span>载入会话记录中...</span>
             </div>
           ) : (
-            messages.map((msg, index) => (
-              <ChatBubble key={msg.id ?? index} message={msg} />
-            ))
+            messages.map((msg, index) => {
+              // assistant 气泡关联该轮任务的终态角标（配对规则：assistant 消息
+              // 紧跟在对应 user 消息之后，取该 user 消息触发任务的终态）
+              let bubbleStatus: string | undefined;
+              if (msg.role === 'assistant') {
+                const sessionTask = sessionTasks[sessionTasks.length - 1 - Math.floor((messages.length - 1 - index) / 2)];
+                bubbleStatus = sessionTask?.task_status;
+              }
+              return <ChatBubble key={msg.id ?? index} message={msg} taskStatus={bubbleStatus} />;
+            })
           )}
 
           {/* Real-time executing animation indicator */}
