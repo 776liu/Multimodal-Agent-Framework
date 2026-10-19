@@ -79,22 +79,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ width }) => {
       style={{ width }}
     >
       {/* Brand Header */}
-      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 text-white shadow-md shadow-indigo-500/20">
+      <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 text-white shadow-md shadow-indigo-500/20 shrink-0">
             <Layers className="w-4 h-4" />
             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-white" />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h1 className="font-semibold text-xs tracking-tight text-slate-900">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h1 className="font-semibold text-xs tracking-tight text-slate-900 truncate">
                 Agent Studio
               </h1>
-              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
                 v2.0
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-normal">
+            <p className="text-[11px] text-slate-400 font-normal truncate">
               多模态协同编排控制台
             </p>
           </div>
@@ -104,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ width }) => {
           onClick={() => loadSessions()}
           title="刷新会话列表"
           disabled={isLoadingSessions}
-          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-all active:scale-95 disabled:opacity-50"
+          className="p-1.5 shrink-0 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-all active:scale-95 disabled:opacity-50"
         >
           <RefreshCw
             className={`w-3.5 h-3.5 ${isLoadingSessions ? 'animate-spin text-indigo-500' : ''}`}
@@ -250,9 +250,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ width }) => {
 
       {/* Footer System Status & Operations */}
       <div className="p-3 border-t border-slate-100 bg-slate-50/70 flex flex-col gap-2">
-        <div className="flex items-center justify-between text-[11px] px-1 text-slate-500">
-          <div className="flex items-center gap-1.5 truncate max-w-[170px]">
-            <span className="text-slate-400 font-mono text-[10px]">ID:</span>
+        <div className="flex items-center justify-between gap-2 text-[11px] px-1 text-slate-500">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="text-slate-400 font-mono text-[10px] shrink-0">ID:</span>
             <span className="font-mono text-[11px] truncate text-slate-700">
               {currentSessionId}
             </span>
@@ -260,7 +260,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ width }) => {
           <button
             onClick={handleCopyId}
             title="复制会话 ID"
-            className="p-1 hover:bg-slate-200 rounded transition-colors text-slate-400 hover:text-slate-700"
+            className="p-1 shrink-0 hover:bg-slate-200 rounded transition-colors text-slate-400 hover:text-slate-700"
           >
             {copiedId ? (
               <Check className="w-3 h-3 text-emerald-500" />

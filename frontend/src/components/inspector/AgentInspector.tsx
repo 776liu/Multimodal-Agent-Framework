@@ -27,7 +27,11 @@ interface TaskView {
   errorSummary: Array<{ model_name: string; capability: string; error_code?: number | null }>;
 }
 
-export const AgentInspector: React.FC = () => {
+interface AgentInspectorProps {
+  width: number;
+}
+
+export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
   const currentTask = useTaskStore((state) => state.currentTask);
   const isExecuting = useTaskStore((state) => state.isExecuting);
   const sessionTasks = useSessionStore((state) => state.sessionTasks);
@@ -126,26 +130,29 @@ export const AgentInspector: React.FC = () => {
   };
 
   return (
-    <aside className="w-84 bg-white border-l border-slate-200/80 flex flex-col h-full select-none shrink-0 overflow-hidden transition-colors duration-200">
+    <aside
+      className="bg-white border-l border-slate-200/80 flex flex-col h-full select-none shrink-0 overflow-hidden transition-colors duration-200"
+      style={{ width }}
+    >
       {/* Header Bar */}
-      <div className="p-3.5 border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="p-1 rounded-md bg-indigo-50 text-indigo-600">
+      <div className="p-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="p-1 rounded-md bg-indigo-50 text-indigo-600 shrink-0">
             <Activity className="w-3.5 h-3.5" />
           </div>
-          <div>
-            <h2 className="font-semibold text-xs text-slate-800">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-xs text-slate-800 truncate">
               Agent 观测看板
             </h2>
-            <p className="text-[10px] text-slate-400">
+            <p className="text-[10px] text-slate-400 truncate">
               {selectedHistoryIdx !== null ? '历史任务回放' : '实时链路观测'}
             </p>
           </div>
         </div>
-        {getStatusBadge(status)}
+        <div className="shrink-0">{getStatusBadge(status)}</div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 space-y-4">
         {/* Multi-turn Task Switcher */}
         {historyTasks.length > 1 && (
           <div className="relative">
@@ -277,11 +284,11 @@ export const AgentInspector: React.FC = () => {
         {/* Task Meta Card */}
         {view ? (
           <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium text-slate-400">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-slate-400 shrink-0">
                 {selectedHistoryIdx !== null ? '回放任务 ID' : '当前任务 ID'}
               </span>
-              <span className="text-[10px] font-mono text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200/60">
+              <span className="text-[10px] font-mono text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200/60 truncate">
                 {view.taskId.slice(0, 14)}...
               </span>
             </div>
@@ -339,12 +346,12 @@ export const AgentInspector: React.FC = () => {
                         : 'border-rose-200 bg-rose-50/30'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-900">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-900 truncate min-w-0">
                         {entry.model_name}
                       </span>
                       <span
-                        className={`text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded ${
+                        className={`shrink-0 text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded ${
                           entry.status === 'SUCCESS'
                             ? 'bg-emerald-50  text-emerald-700 '
                             : 'bg-rose-50  text-rose-700 '
@@ -354,13 +361,13 @@ export const AgentInspector: React.FC = () => {
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between text-[10px] text-slate-400">
-                      <span className="flex items-center gap-1 font-mono">
-                        <Layers className="w-3 h-3 text-slate-400" />
-                        {entry.capability}
+                    <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                      <span className="flex items-center gap-1 font-mono min-w-0 truncate">
+                        <Layers className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span className="truncate">{entry.capability}</span>
                       </span>
                       {entry.attempted_at && (
-                        <span className="font-mono">{entry.attempted_at.slice(11, 19)}</span>
+                        <span className="font-mono shrink-0">{entry.attempted_at.slice(11, 19)}</span>
                       )}
                     </div>
 
