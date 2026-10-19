@@ -11,7 +11,11 @@ CAPABILITY_ALIASES = {
     "text-generation-vlm": "image-to-text",
     "image-to-image": "image-generation",
     "text2image": "image-generation",
-    "video-generation": "image-generation",   # 无视频模型时暂由生图兜底
+    "text-to-video": "video-generation",
+    "t2v": "video-generation",
+    "image-to-video": "video-generation",
+    "i2v": "video-generation",
+    "video": "video-generation",
     "script-writing": "text-generation",
     "copywriting": "text-generation",
     "translation": "text-generation",

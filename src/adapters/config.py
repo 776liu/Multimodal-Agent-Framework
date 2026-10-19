@@ -51,5 +51,8 @@ def load_app_config(config_path: str = None) -> dict:
     return {
         "api_base": app.get("api_base", "http://127.0.0.1:8100"),
         "poll_interval": app.get("poll_interval", 2),
-        "timeout_seconds": app.get("timeout_seconds", 180),
+        # 视频生成任务耗时约 5-6 分钟，默认超时放宽到 15 分钟避免误杀
+        "timeout_seconds": app.get("timeout_seconds", 900),
+        "video_poll_budget": app.get("video_poll_budget", 600),
+        "video_poll_interval": app.get("video_poll_interval", 6),
     }

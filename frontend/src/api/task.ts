@@ -28,7 +28,7 @@ export const taskApi = {
     taskId: string,
     onProgress?: (task: TaskDetail) => void,
     intervalMs: number = 1000,
-    timeoutMs: number = 120000
+    timeoutMs: number = 480000
   ): Promise<TaskDetail> => {
     const startTime = Date.now();
 
