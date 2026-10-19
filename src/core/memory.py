@@ -1,14 +1,20 @@
-from typing import List,Dict
+from typing import List, Dict, Optional
 from src.core.models import Messages
 import json
 
 
 class Memory:
     """会话记忆，存储和检索历史对话"""
+    # 多 Agent 私有作用域统一使用该键（升级计划 4.4）
+    PUBLIC_SCOPE = "__public__"
+
     def __init__(self, max_history: int = 10, storage = None):
         self.max_history = max_history
         self.storage = storage
         self.sessions: Dict[str, List[Messages]] = {}
+        # Agent 维度私有记忆: agent_id -> scope_key -> List[Messages]
+        # 仅进程内缓存，不落 SQLite（对话正文仍由 Worker 统一持久化）
+        self.agent_sessions: Dict[str, Dict[str, List[Messages]]] = {}
 
 
     def add(self, session_id: str, role: str, content: str) ->None:
@@ -78,6 +84,50 @@ class Memory:
         """前端检查会话是否已在记忆缓存中"""
         return session_id in self.sessions
 
+    # ==================================================================
+    # Agent 维度隔离（升级计划 4.4）
+    # 设计: 对话正文仍走 PUBLIC_SCOPE（供前端与 TaskRouter 使用），
+    #       各 Agent 的中间推理/工具记录走自己的 agent_id 作用域，
+    #       避免 Image Agent 被长文本对话历史污染画面提示词。
+    # ==================================================================
+    def add_agent_message(self, session_id: str, agent_id: str,
+                          role: str, content: str, scope: str = "private") -> None:
+        """写入某 Agent 的记忆
+
+        scope="private": 仅该 Agent 可见（默认）
+        scope="public" : 写入公共对话流（等价于 add）
+        """
+        if scope == "public":
+            self.add(session_id, role, content)
+            return
+
+        key = f"{agent_id}::{session_id}"
+        self.agent_sessions.setdefault(agent_id, {}).setdefault(key, [])
+        self.agent_sessions[agent_id][key].append(Messages(role=role, content=content))
+
+        max_messages = self.max_history * 2
+        if len(self.agent_sessions[agent_id][key]) > max_messages:
+            self.agent_sessions[agent_id][key] = \
+                self.agent_sessions[agent_id][key][-max_messages:]
+
+    def get_agent_history(self, session_id: str, agent_id: str,
+                          include_public: bool = False) -> List[Messages]:
+        """取某 Agent 的私有记忆；include_public=True 时前置公共历史"""
+        key = f"{agent_id}::{session_id}"
+        private = list(self.agent_sessions.get(agent_id, {}).get(key, []))
+        if not include_public:
+            return private
+        return list(self.get_history(session_id)) + private
+
+    def clear_agent_memory(self, session_id: str, agent_id: Optional[str] = None) -> None:
+        """清理记忆。agent_id 为 None 时清理该会话全部 Agent 私有记忆"""
+        if agent_id is None:
+            for aid in list(self.agent_sessions.keys()):
+                self.agent_sessions[aid].pop(f"{aid}::{session_id}", None)
+            return
+        self.agent_sessions.get(agent_id, {}).pop(f"{agent_id}::{session_id}", None)
+
     def delete_session(self, session_id: str) -> None:
-        """删除指定会话的全部记忆"""
+        """删除会话全部记忆（含各 Agent 私有作用域）"""
         self.sessions.pop(session_id, None)
+        self.clear_agent_memory(session_id, None)

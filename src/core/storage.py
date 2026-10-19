@@ -64,9 +64,27 @@ class Storage:
                     FOREIGN KEY (task_id) REFERENCES task_logs(task_id)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS agent_messages(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    session_id TEXT DEFAULT 'default',
+                    from_agent TEXT NOT NULL,
+                    to_agent TEXT NOT NULL,
+                    step INTEGER DEFAULT 0,
+                    message_type TEXT NOT NULL,
+                    content TEXT,
+                    artifacts TEXT,
+                    status TEXT,
+                    issues TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_session ON task_logs(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_task_audits_task ON task_audits(task_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id)")
 
         self._check_columns()
 
@@ -81,6 +99,17 @@ class Storage:
             if col not in existing:
                 with self._get_conn() as conn:
                     conn.execute(f"ALTER TABLE task_logs ADD COLUMN {col} TEXT")
+
+        # 平滑升级：老库若已存在 agent_messages 但缺列，补齐
+        with self._get_conn() as conn:
+            am_cols = {
+                row["name"] for row in
+                conn.execute("PRAGMA table_info(agent_messages)").fetchall()
+            }
+        for col, coltype in (("session_id", "TEXT"), ("status", "TEXT"), ("issues", "TEXT")):
+            if am_cols and col not in am_cols:
+                with self._get_conn() as conn:
+                    conn.execute(f"ALTER TABLE agent_messages ADD COLUMN {col} {coltype}")
 
         with self._get_conn() as conn:
             session_cols = {
@@ -360,3 +389,87 @@ class Storage:
                 results=[TaskResult(**r) for r in json.loads(results_raw)],
                 call_chain=[CallChainEntry(**c) for c in json.loads(chain_raw)],
             )
+
+    # ==================================================================
+    # 多 Agent 交互痕迹（升级计划 4.5 / 阶段一）
+    # 记录 Orchestrator 与各专业 Agent 之间的消息与工件交换，
+    # 供论文做协作过程可观测性分析与前端链路回放。
+    # ==================================================================
+    def save_agent_message(
+        self,
+        task_id: str,
+        session_id: str,
+        from_agent: str,
+        to_agent: str,
+        step: int = 0,
+        message_type: str = "dispatch",
+        content: str = "",
+        artifacts: Optional[List[dict]] = None,
+        status: Optional[str] = None,
+        issues: Optional[List[str]] = None,
+    ) -> None:
+        """保存一条 Agent 间消息。写入失败不阻断主流程（与既有风格一致）"""
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "INSERT INTO agent_messages "
+                    "(task_id, session_id, from_agent, to_agent, step, "
+                    " message_type, content, artifacts, status, issues) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        task_id,
+                        session_id,
+                        from_agent,
+                        to_agent,
+                        step,
+                        message_type,
+                        content or "",
+                        json.dumps(artifacts or [], ensure_ascii=False),
+                        status,
+                        json.dumps(issues, ensure_ascii=False) if issues else None,
+                    ),
+                )
+        except Exception:
+            pass  # 审计类写入静默失败，不影响任务执行
+
+    def get_agent_messages(self, task_id: str, limit: int = 100) -> List[dict]:
+        """按步骤顺序取某任务的全部 Agent 消息"""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_messages WHERE task_id = ? "
+                "ORDER BY step ASC, id ASC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+            return [
+                {
+                    "task_id": r["task_id"],
+                    "session_id": r["session_id"],
+                    "from_agent": r["from_agent"],
+                    "to_agent": r["to_agent"],
+                    "step": r["step"],
+                    "message_type": r["message_type"],
+                    "content": r["content"] or "",
+                    "artifacts": json.loads(r["artifacts"] or "[]"),
+                    "status": r["status"],
+                    "issues": json.loads(r["issues"]) if r["issues"] else None,
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+
+    def get_session_agent_messages(self, session_id: str, limit: int = 100) -> List[dict]:
+        """取某会话下所有 Agent 消息（跨任务，用于会话级协作过程回放）
+
+        注意: DISTINCT 必需 —— 同一 task_id 下会有多条消息，
+        若直接按行遍历会导致同一批消息被重复展开。
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT task_id FROM agent_messages WHERE session_id = ? "
+                "ORDER BY task_id",
+                (session_id,),
+            ).fetchall()
+        out: List[dict] = []
+        for r in rows:
+            out.extend(self.get_agent_messages(r["task_id"]))
+        return out
