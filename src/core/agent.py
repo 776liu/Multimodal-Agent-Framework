@@ -10,6 +10,20 @@ import uuid
 from typing import Callable, Optional
 
 
+# capability → LLMClient 输出协议类型 的映射表
+# 注意: capability 与 output_type 是两套命名，不能直接透传
+#   text-generation / image-to-text  -> "text"
+#   image-generation                  -> "image"
+#   video-generation / image-to-video -> "video"
+OUTPUT_TYPE_MAP = {
+    "text-generation": "text",
+    "image-to-text": "text",
+    "image-generation": "image",
+    "video-generation": "video",
+    "image-to-video": "video",
+}
+
+
 class Agent:
     """负责任务状态机"""
 
@@ -123,12 +137,22 @@ class Agent:
                     "total": total,
                 })
 
-                # 输出类型按 capability 决定（video 有独立异步分支）
-                output_type = capability_required
-                if capability_required in ("text-generation", "image-to-text"):
-                    output_type = "text"
-                elif capability_required in ("video-generation", "image-to-video"):
-                    output_type = "video"
+                # 输出类型按 capability 映射到 LLMClient 支持的协议类型
+                # 见模块级 OUTPUT_TYPE_MAP 注释
+                output_type = OUTPUT_TYPE_MAP.get(capability_required)
+                if output_type is None:
+                    # 未知 capability：记录语义化失败原因，避免以 -1 静默失败
+                    _no_model_reason = (
+                        f"步骤{i + 1}的能力[{capability_required}]没有对应的输出协议映射"
+                    )
+                    call_chain.append(CallChainEntry(
+                        model_name="(unsupported-capability)",
+                        capability=capability_required,
+                        status="FAILED",
+                        error_code=-3,
+                        attempted_at=str(time.time()),
+                    ))
+                    break
 
                 # 视频生成耗时较长(约5分钟)，提前告知前端进入长任务等待
                 if output_type == "video":
