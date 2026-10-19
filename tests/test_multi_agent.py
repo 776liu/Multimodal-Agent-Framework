@@ -138,6 +138,7 @@ class _EchoAgent(BaseAgent):
     default_capability = "text-generation"
 
     def _run(self, message, context, model_info):
+        self.model_invoked = True
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],

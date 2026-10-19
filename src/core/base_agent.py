@@ -48,6 +48,8 @@ class BaseAgent(ABC):
         self.capability = capability or self.default_capability
         # 调用链收集器，由 Orchestrator 在任务结束后取走落库
         self.call_chain: List[CallChainEntry] = []
+        # 是否真实发起过模型调用（子类短路时置 False）
+        self.model_invoked = False
 
     # ------------------------------------------------------------------
     # 子类实现入口
@@ -70,6 +72,10 @@ class BaseAgent(ABC):
 
         failed_models: List[str] = []
         last_response: Optional[AgentResponse] = None
+        # 本次执行是否真的发起了模型调用。
+        # 子类若在本地规则层短路（如 Reviewer 规则核验媒体产物），
+        # 应置为 False，避免调用链出现"并未发生的模型调用"记录。
+        self.model_invoked = False
 
         while True:
             model_info = self.router.get_model(capability, failed_models)
@@ -90,7 +96,8 @@ class BaseAgent(ABC):
                 response = AgentResponse.failed(self.name, error_code=-1, issues=[str(exc)])
 
             if response.ok:
-                self._record_chain(model_info, capability, "SUCCESS")
+                if self.model_invoked:
+                    self._record_chain(model_info, capability, "SUCCESS")
                 return response
 
             # NEED_REVISION 是终态而非模型故障：内容质量不达标，
@@ -101,7 +108,8 @@ class BaseAgent(ABC):
                 return response
 
             last_response = response
-            self._record_chain(model_info, capability, "FAILED", response.error_code)
+            if self.model_invoked:
+                self._record_chain(model_info, capability, "FAILED", response.error_code)
             failed_models.append(model_info["registered_name"])
 
             # 失败且仍可重试 → 换模型；否则终止

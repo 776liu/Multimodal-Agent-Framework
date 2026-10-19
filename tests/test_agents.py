@@ -137,8 +137,9 @@ def test_writer_agent_routes_to_vlm_when_image_present():
     assert llm.calls[0]["model"] == "vlm-A"      # 走了 VLM
     assert llm.calls[0]["image"] == "https://x/img.png"
     assert resp.artifacts[0].metadata["used_vision"] is True
-    # 上游图片作为上下文一并回传，供下游复用
-    assert any(a.type == ARTIFACT_IMAGE for a in resp.artifacts)
+    # 只回传本次新产物，上游图片不得重复回传（否则结果集中出现重复图片）
+    assert len(resp.artifacts) == 1
+    assert resp.artifacts[0].type == ARTIFACT_TEXT
 
 
 def test_writer_agent_rejects_empty_content():
@@ -394,3 +395,62 @@ def test_rule_check_short_circuit_costs_no_model_call():
 
     assert resp.status == STATUS_NEED_REVISION
     assert calls["n"] == 0, "规则快筛拦截时不应调用任何模型"
+
+
+def test_reviewer_skips_llm_review_for_media_only():
+    """纯媒体产物不做 LLM 深度评估：纯文本模型无法核验视频/图片，
+    强行评估会误判并白白触发反思重试（如重跑一次 5 分钟的视频生成）"""
+    calls = {"n": 0}
+
+    class _CountLLM(_StubLLM):
+        def call(self, model_name, endpoint, api_key, prompt, output_type, image_url=""):
+            calls["n"] += 1
+            return super().call(model_name, endpoint, api_key, prompt, output_type, image_url)
+
+    agent = ReviewerAgent(_router(), _CountLLM())
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent",
+             artifacts=[Artifact.video_of("https://x/v.mp4")]),
+        TaskContext(task_id="t1", max_retries=2),
+    )
+
+    assert resp.ok
+    assert calls["n"] == 0, "媒体产物不应触发任何模型调用"
+    assert "规则核验" in resp.output_text
+
+
+def test_reviewer_reviews_text_among_media():
+    """文本 + 视频混合时，只对文本做深度评估，媒体走规则"""
+    agent = ReviewerAgent(_router(), _StubLLM())
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent", artifacts=[
+            Artifact.text_of("这是一段足够长的正文内容。"),
+            Artifact.video_of("https://x/v.mp4"),
+        ]),
+        TaskContext(task_id="t1", max_retries=0),
+    )
+    assert resp.ok
+    assert "评分" in resp.output_text
+
+
+def test_call_chain_omits_short_circuit_reviews():
+    """规则层短路未调模型时，调用链不得出现虚假模型记录"""
+    agent = ReviewerAgent(_router(), _StubLLM())
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent", artifacts=[Artifact.video_of("https://x/v.mp4")]),
+        TaskContext(task_id="t1", max_retries=0),
+    )
+    assert resp.ok
+    assert agent.drain_call_chain() == [], "未调用模型则不应有链路记录"
+
+
+def test_call_chain_records_real_model_calls():
+    """真实调用模型的步骤必须留下链路记录"""
+    agent = ReviewerAgent(_router(), _StubLLM())
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent", artifacts=[Artifact.text_of("这是一段足够长的正文内容。")]),
+        TaskContext(task_id="t1", max_retries=0),
+    )
+    assert resp.ok
+    chain = agent.drain_call_chain()
+    assert len(chain) == 1 and chain[0].model_name == "text-A"

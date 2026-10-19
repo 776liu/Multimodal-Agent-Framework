@@ -72,14 +72,21 @@ class ReviewerAgent(BaseAgent):
             return AgentResponse.need_revision(self.name, rule_issues)
 
         # ---- 第二级：LLM 深度评估 ----
-        if not self.enable_llm_review:
+        # 仅对文本产物做深度评估：纯文本审查模型无法真正"看懂"图片/视频，
+        # 让其评媒体 URL 只会产生误判，进而白白触发反思重试
+        # （实测会导致视频被无谓重跑一次，浪费数分钟推理）。
+        # 媒体产物由第一级规则（URL 可达性/格式）保证。
+        reviewable = [a for a in artifacts if a.type == "text"]
+        if not self.enable_llm_review or not reviewable:
+            note = "规则审查通过" + ("（媒体产物，规则核验）" if not reviewable else "")
             return AgentResponse.success(
                 self.name,
                 artifacts=artifacts,
-                output_text=f"规则审查通过（{len(artifacts)} 项产物）",
+                output_text=f"{note}（{len(artifacts)} 项产物）",
             )
 
-        review_text = self._compose_review_input(artifacts)
+        review_text = self._compose_review_input(reviewable)
+        self.model_invoked = True
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
