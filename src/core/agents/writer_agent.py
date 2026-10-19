@@ -16,7 +16,6 @@ from src.core.contracts import (
     AgentMessage,
     AgentResponse,
     TaskContext,
-    ARTIFACT_IMAGE,
 )
 
 
@@ -39,6 +38,7 @@ class WriterAgent(BaseAgent):
              model_info: dict) -> AgentResponse:
         image_url = message.first_image_url
 
+        self.model_invoked = True
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
@@ -69,11 +69,11 @@ class WriterAgent(BaseAgent):
             used_vision=bool(image_url),
         )
 
-        # 上游图片作为上下文保留，便于下游回溯（图生文场景）
-        upstream = [a for a in message.artifacts if a.type == ARTIFACT_IMAGE]
-
+        # 只回传本次新产生的文本产物。
+        # 上游图片不在此重复回传：它们已由 Orchestrator 的 TaskContext 统一持有，
+        # 若在此随响应回传，会在最终结果集中造成同一张图片重复出现。
         return AgentResponse.success(
             self.name,
-            artifacts=[artifact] + upstream,
+            artifacts=[artifact],
             output_text=content,
         )

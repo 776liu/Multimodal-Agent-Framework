@@ -31,6 +31,7 @@ class ImageAgent(BaseAgent):
         # 有上游图片则走图生图，否则文生图
         ref_image = message.first_image_url
 
+        self.model_invoked = True
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
