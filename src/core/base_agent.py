@@ -20,6 +20,7 @@ from src.core.contracts import (
     TaskContext,
     STATUS_SUCCESS,
     STATUS_FAILED,
+    STATUS_NEED_REVISION,
 )
 from src.core.router import Router
 from src.core.llm_client import LLMClient
@@ -90,6 +91,13 @@ class BaseAgent(ABC):
 
             if response.ok:
                 self._record_chain(model_info, capability, "SUCCESS")
+                return response
+
+            # NEED_REVISION 是终态而非模型故障：内容质量不达标，
+            # 换模型重试无意义（问题在产物不在模型），
+            # 交由 Orchestrator 依据 issues 决定是否重做整个步骤。
+            if response.status == STATUS_NEED_REVISION:
+                self._record_chain(model_info, capability, "NEED_REVISION")
                 return response
 
             last_response = response
