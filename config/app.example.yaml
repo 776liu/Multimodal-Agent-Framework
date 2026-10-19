@@ -2,4 +2,7 @@
 app:
   api_base: "http://127.0.0.1:8100"   # FastAPI 后端地址（8100，避开其他项目常用的 8000）
   poll_interval: 2                     # 轮询间隔（秒）
-  timeout_seconds: 180                 # 任务超时（秒）
+  timeout_seconds: 900                 # 任务超时（秒）— 视频生成约 5-6 分钟，留足余量
+  # 视频生成专项参数（后端 LLMClient 同步使用）
+  video_poll_budget: 600               # 视频轮询总预算（秒），超时返回可重试错误
+  video_poll_interval: 6               # 视频状态轮询间隔（秒）

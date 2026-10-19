@@ -85,15 +85,20 @@ class Agent:
                 routing_capability = capability_required
                 if capability_required == "text-generation" and call_image_url:
                     routing_capability = "image-to-text"
+                elif capability_required == "video-generation" and call_image_url:
+                    # 图生视频：带参考帧时优先路由 I2V 模型
+                    routing_capability = "image-to-video"
 
                 model_info = self.router.get_model(routing_capability, failed_models)
 
                 if "error" in model_info:
-                    # image-to-text 模型耗尽时回退到纯文本池兜底（宁可重试也不直接失败）
-                    if routing_capability == "image-to-text":
-                        model_info = self.router.get_model(
-                            "text-generation", failed_models
+                    # VLM / I2V 专属池耗尽时回退到通用池兜底（宁可重试也不直接失败）
+                    if routing_capability in ("image-to-text", "image-to-video"):
+                        fallback_cap = (
+                            "text-generation" if routing_capability == "image-to-text"
+                            else "video-generation"
                         )
+                        model_info = self.router.get_model(fallback_cap, failed_models)
                     if "error" in model_info:
                         # 无模型可用：写入语义化失败原因，不再让 Builder 输出
                         # 笼统的"服务暂时不可用"
@@ -118,7 +123,23 @@ class Agent:
                     "total": total,
                 })
 
-                output_type = "text" if capability_required == "text-generation" else "image"
+                # 输出类型按 capability 决定（video 有独立异步分支）
+                output_type = capability_required
+                if capability_required in ("text-generation", "image-to-text"):
+                    output_type = "text"
+                elif capability_required in ("video-generation", "image-to-video"):
+                    output_type = "video"
+
+                # 视频生成耗时较长(约5分钟)，提前告知前端进入长任务等待
+                if output_type == "video":
+                    _emit({
+                        "stage": "video_rendering",
+                        "step": i + 1,
+                        "total": total,
+                        "model": model_info["registered_name"],
+                        "notice": "视频生成中，通常需要 3-6 分钟",
+                    })
+
                 response = self.llm_client.call(
                     model_name=model_info["model_name"],
                     endpoint=model_info["endpoint"],
@@ -140,7 +161,6 @@ class Agent:
 
                     if response.data and response.data.type == "image" and response.data.url:
                         step_outputs[subtask.step] = response.data.url
-
                     success = True
                     _emit({
                         "stage": "subtask_done",

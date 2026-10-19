@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { ChatBubble } from './ChatBubble';
@@ -23,7 +23,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 }) => {
   const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession, refreshSessionLabel, sessionTasks } =
     useSessionStore();
-  const { isExecuting, activeTaskId, submitTask, error } = useTaskStore();
+  const { isExecuting, activeTaskId, submitTask, error, elapsedMs } = useTaskStore();
+  const [lastInput, setLastInput] = useState('');
+  const isLongTask = /视频|短片|动画|video/i.test(lastInput);
+
+  const formatElapsed = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return min > 0 ? `${min} 分 ${sec} 秒` : `${sec} 秒`;
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +45,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   }, [messages, isExecuting]);
 
   const handleSend = async (text: string) => {
+    setLastInput(text);
     // 乐观追加用户消息
     addMessage({
       role: 'user',
@@ -163,6 +173,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   <div className="h-3.5 bg-slate-100 rounded skeleton-shimmer w-3/4" />
                   <div className="h-3.5 bg-slate-100 rounded skeleton-shimmer w-1/2" />
                 </div>
+
+                {/* 长任务等待提示：视频生成耗时较长，显式告知避免误以为卡死 */}
+                {isLongTask && (
+                  <div className="flex items-start gap-1.5 pt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                    <Clock className="w-3 h-3 shrink-0 mt-0.5" />
+                    <span>
+                      检测到视频生成任务，平台推理通常需要 3-6 分钟，请耐心等待；
+                      期间可切换会话，返回后结果会自动保存。
+                    </span>
+                  </div>
+                )}
+
+                {/* 已等待时长 */}
+                {elapsedMs > 3000 && (
+                  <div className="text-[10px] font-mono text-slate-400">
+                    已等待 {formatElapsed(elapsedMs)}
+                  </div>
+                )}
               </div>
             </div>
           )}
