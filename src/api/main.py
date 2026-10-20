@@ -1,11 +1,14 @@
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from src.api import create_agent
 from src.api.redis_task_manager import RedisTaskManager
 from src.api.worker import Worker
+from src.core.video_archive import ARCHIVE_DIR, is_valid_archive_name
 import threading
+import os
 
 class TaskRequest(BaseModel):
     user_input: str
@@ -136,6 +139,27 @@ async def get_task_agents(task_id: str, request: Request):
         "steps": [trace[s] for s in sorted(order)],
         "message_count": len(messages),
     }
+
+@app.get("/api/artifacts/video/{name}")
+async def serve_video(name: str):
+    """本地归档视频托管（工单 T-03）
+
+    支持 Range 请求（HTTP 206），保证浏览器拖动进度条流畅。
+    拒绝路径穿越：文件名仅允许安全字符。
+    """
+    if not is_valid_archive_name(name):
+        raise HTTPException(status_code=400, detail="Invalid artifact name")
+
+    path = ARCHIVE_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Video not archived")
+
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=name,
+    )
+
 
 @app.get("/api/session/{session_id}/history")
 async def get_conversation_history(session_id: str, request: Request):
