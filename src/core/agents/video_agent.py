@@ -11,6 +11,7 @@
 产物：Artifact(video)，携带 prompt 与首帧信息，供 Reviewer 校验与前端渲染。
 """
 from src.core.base_agent import BaseAgent
+from src.core.video_archive import archive_video
 from src.core.prompt_policy import apply_no_text
 from src.core.contracts import (
     Artifact,
@@ -74,4 +75,18 @@ class VideoAgent(BaseAgent):
             mode="image-to-video" if ref_image else "text-to-video",
             first_frame=ref_image or "",
         )
+
+        # 本地归档（工单 T-03）：签名 URL 24h 过期，落盘才能保证演示可靠性。
+        # 归档失败不阻断任务——content 仍是原始外链，仅失去长期可播性。
+        archived = archive_video(
+            url=url,
+            task_id=context.task_id,
+            step=message.step,
+        )
+        if archived:
+            artifact.metadata["local_path"] = archived["local_path"]
+            artifact.metadata["size_bytes"] = archived["size_bytes"]
+            # 原始外链留档溯源（签名 24h 过期，仅短期可用）
+            artifact.metadata["remote_url"] = url
+
         return AgentResponse.success(self.name, artifacts=[artifact])

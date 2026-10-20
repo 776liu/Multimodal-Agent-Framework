@@ -67,10 +67,19 @@ class Artifact:
         )
 
     def to_task_result(self):
-        """转换为存量 TaskResult，便于复用现有 Builder/Storage 链路"""
+        """转换为存量 TaskResult，便于复用现有 Builder/Storage 链路
+
+        视频已本地归档时（工单 T-03），url 直接指向本地静态端点：
+        平台签名 URL 24h 过期，前端应优先播放归档副本。
+        原始外链保留在 metadata.remote_url 供溯源。
+        """
         from src.core.models import TaskResult
         if self.type in (ARTIFACT_IMAGE, ARTIFACT_VIDEO, ARTIFACT_FILE):
-            return TaskResult(type=self.type, url=self.content)
+            url = self.content
+            if self.type == ARTIFACT_VIDEO and self.metadata.get("local_path"):
+                from src.core.video_archive import resolve_local_url
+                url = resolve_local_url(self.metadata["local_path"])
+            return TaskResult(type=self.type, url=url)
         return TaskResult(type=ARTIFACT_TEXT, content=self.content)
 
 
