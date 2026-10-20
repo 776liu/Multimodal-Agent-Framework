@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useTaskStore } from '../../stores/taskStore';
 import { ChatBubble } from './ChatBubble';
+import { AgentRoleCard } from './AgentRoleCard';
 import { PromptInput } from './PromptInput';
 import {
   PanelRightClose,
@@ -23,7 +24,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 }) => {
   const { currentSessionId, messages, isLoadingHistory, addMessage, selectSession, refreshSessionLabel, sessionTasks } =
     useSessionStore();
-  const { isExecuting, activeTaskId, submitTask, error, elapsedMs } = useTaskStore();
+  const { isExecuting, activeTaskId, submitTask, error, elapsedMs, progressEvents, agentTrace,
+    loadAgentTrace } = useTaskStore();
   const [lastInput, setLastInput] = useState('');
   const isLongTask = /视频|短片|动画|video/i.test(lastInput);
 
@@ -43,6 +45,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages, isExecuting]);
+
+  // 刷新页面/切换会话后，从后端恢复最近一轮任务的多 Agent 轨迹
+  // （否则角色卡只在本次会话内可见，不满足"刷新可恢复"的验收标准）
+  useEffect(() => {
+    if (isExecuting || isLoadingHistory) return;
+    const latest = sessionTasks[0];
+    if (latest?.task_id) {
+      loadAgentTrace(latest.task_id);
+    }
+    // 仅在会话任务列表变化时触发
+  }, [sessionTasks, isExecuting, isLoadingHistory, loadAgentTrace]);
 
   const handleSend = async (text: string) => {
     setLastInput(text);
@@ -141,7 +154,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 const sessionTask = sessionTasks[sessionTasks.length - 1 - Math.floor((messages.length - 1 - index) / 2)];
                 bubbleStatus = sessionTask?.task_status;
               }
-              return <ChatBubble key={msg.id ?? index} message={msg} taskStatus={bubbleStatus} />;
+              // 只在最近一轮 assistant 气泡前挂角色卡：
+              // 一个会话可能有多轮任务，每轮对应一张协作卡
+              const isLastAssistant =
+                msg.role === 'assistant' &&
+                messages.slice(index + 1).every((m) => m.role !== 'assistant');
+              return (
+                <React.Fragment key={msg.id ?? index}>
+                  {isLastAssistant && (
+                    <AgentRoleCard
+                      trace={agentTrace}
+                      events={progressEvents}
+                      totalElapsedMs={elapsedMs}
+                    />
+                  )}
+                  <ChatBubble message={msg} taskStatus={bubbleStatus} />
+                </React.Fragment>
+              );
             })
           )}
 

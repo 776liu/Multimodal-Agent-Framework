@@ -14,9 +14,56 @@ export interface TaskResultItem {
 export interface CallChainEntry {
   model_name: string;
   capability: string;
-  status: 'SUCCESS' | 'FAILED' | string;
+  status: 'SUCCESS' | 'FAILED' | 'NEED_REVISION' | string;
   error_code?: number | null;
   attempted_at?: string;
+  /** 发起该调用的 Agent 角色名（工单 T-01）。老数据缺此字段时为空串 */
+  agent?: string;
+  /** 本次模型调用耗时（毫秒）。老数据缺此字段时为 0 */
+  elapsed_ms?: number;
+}
+
+/** 任务进度事件（工单 T-01 /progress 端点） */
+export interface ProgressEvent {
+  stage:
+    | 'planning'
+    | 'planned'
+    | 'dispatching'
+    | 'collecting'
+    | 'auditing'
+    | 'revision'
+    | string;
+  agent?: string;
+  step?: number;
+  total?: number;
+  status?: string;
+  issues?: string[];
+  notice?: string;
+  ts?: number;
+}
+
+/** /agents 端点：一条 Agent 间消息（工单 T-01） */
+export interface AgentTraceEntry {
+  from_agent: string;
+  to_agent: string;
+  message_type: 'dispatch' | 'result' | string;
+  status?: string | null;
+  content?: string;
+  artifacts?: Array<{ type: string; url: string }>;
+  created_at?: string;
+}
+
+export interface AgentTraceStep {
+  step: number;
+  entries: AgentTraceEntry[];
+}
+
+export interface AgentTraceResponse {
+  task_id: string;
+  internal_task_id: string;
+  roles: string[];
+  steps: AgentTraceStep[];
+  message_count: number;
 }
 
 export interface TaskResponseData {

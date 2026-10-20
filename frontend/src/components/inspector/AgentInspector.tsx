@@ -1,13 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { useTaskStore } from '../../stores/taskStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import type { CallChainEntry } from '../../types';import {
+import type { CallChainEntry } from '../../types';
+import {
   Activity,
   CheckCircle2,
   XCircle,
   Clock,
   AlertTriangle,
-  Layers,
   ShieldCheck,
   Cpu,
   Workflow,
@@ -73,6 +73,40 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
 
   const status = view?.status || (isExecuting ? 'processing' : 'IDLE');
   const failedCount = view?.callChain.filter((c) => c.status !== 'SUCCESS').length ?? 0;
+
+  /**
+   * 按 Agent 角色分组调用链（工单 T-02）
+   *
+   * 为什么要分组而非平铺模型名：
+   * 单 Agent 多模型调度器产出的 call_chain 与此结构完全相同，
+   * 只有"哪个角色调了哪个模型"这一维度，能证明系统是多 Agent 协作。
+   * 因此以 agent 为主键分组，模型降级明细作为组内明细展示。
+   */
+  const groupedByAgent = useMemo(() => {
+    const chain = view?.callChain || [];
+    const groups = new Map<string, CallChainEntry[]>();
+    chain.forEach((entry, idx) => {
+      // 老数据无 agent 字段时归入"未标注"组，不伪造角色名
+      const key = entry.agent || '未标注角色';
+      const list = groups.get(key) || [];
+      // 保留原始顺序，组内按调用先后排列
+      list.push({ ...entry, _idx: idx } as CallChainEntry & { _idx: number });
+      groups.set(key, list);
+    });
+    return Array.from(groups.entries()).map(([role, entries]) => {
+      const totalMs = entries.reduce((sum, e) => sum + (e.elapsed_ms || 0), 0);
+      const failures = entries.filter((e) => e.status !== 'SUCCESS');
+      return {
+        role,
+        entries,
+        totalMs,
+        // 降级次数：同一角色调用多个不同模型即为发生降级
+        degraded: new Set(entries.map((e) => e.model_name)).size > 1 && failures.length > 0,
+        failedCount: failures.length,
+        allOk: failures.length === 0,
+      };
+    });
+  }, [view]);
 
   const getStatusBadge = (s: string) => {
     switch (s) {
@@ -310,72 +344,94 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
           </div>
         )}
 
-        {/* Execution Flow (Call Chain) */}
+        {/* 调用链路：按 Agent 角色分组（工单 T-02）
+            设计原则：只渲染后端已记录的事实，不做演示性装饰。
+            分组维度是 agent 而非 model —— 后者是单 Agent 调度器也会有的数据。 */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
               <Workflow className="w-3.5 h-3.5 text-indigo-600" />
-              <span>多智能体调用链</span>
+              <span>调用链路</span>
             </div>
             <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
-              {view?.callChain.length ?? 0} 节点
+              {groupedByAgent.length} 个角色 · {view?.callChain.length ?? 0} 次调用
               {failedCount > 0 && (
                 <span className="text-rose-500 font-semibold"> · {failedCount} 失败</span>
               )}
             </span>
           </div>
 
-          {(view?.callChain.length ?? 0) === 0 ? (
+          {groupedByAgent.length === 0 ? (
             <div className="text-xs text-slate-400 p-3 bg-slate-50 rounded-lg text-center border border-slate-100">
               暂无执行调用记录
             </div>
           ) : (
-            <div className="relative pl-3.5 space-y-2.5 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-px before:bg-slate-200">
-              {view!.callChain.map((entry, idx) => (
-                <div key={idx} className="relative">
-                  <span
-                    className={`absolute -left-[14px] top-2 w-2 h-2 rounded-full border-2 border-white  shadow-xs ${
-                      entry.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
-                    }`}
-                  />
-
-                  <div
-                    className={`bg-white border rounded-xl p-2.5 shadow-xs transition-colors space-y-1 ${
-                      entry.status === 'SUCCESS'
-                        ? 'border-slate-200/80 hover:border-indigo-400/60'
-                        : 'border-rose-200 bg-rose-50/30'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-900 truncate min-w-0">
-                        {entry.model_name}
+            <div className="space-y-2">
+              {groupedByAgent.map((group) => (
+                <div
+                  key={group.role}
+                  className={`rounded-xl border p-2.5 space-y-1.5 ${
+                    group.allOk
+                      ? 'bg-white border-slate-200/80'
+                      : 'bg-rose-50/40 border-rose-200'
+                  }`}
+                >
+                  {/* 角色头：角色名 + 汇总状态 + 耗时 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2 h-2 rounded-full shrink-0 bg-indigo-500" />
+                      <span className="text-xs font-semibold text-slate-900 font-mono truncate">
+                        {group.role}
                       </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {group.degraded && (
+                        <span
+                          className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200/70"
+                          title="主模型失败后自动切换备用模型"
+                        >
+                          自动降级
+                        </span>
+                      )}
+                      {group.totalMs > 0 && (
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {(group.totalMs / 1000).toFixed(1)}s
+                        </span>
+                      )}
                       <span
-                        className={`shrink-0 text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded ${
-                          entry.status === 'SUCCESS'
-                            ? 'bg-emerald-50  text-emerald-700 '
-                            : 'bg-rose-50  text-rose-700 '
+                        className={`text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded ${
+                          group.allOk
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-rose-50 text-rose-700'
                         }`}
                       >
-                        {entry.status}
+                        {group.allOk ? 'OK' : `${group.failedCount} 失败`}
                       </span>
                     </div>
+                  </div>
 
-                    <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
-                      <span className="flex items-center gap-1 font-mono min-w-0 truncate">
-                        <Layers className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span className="truncate">{entry.capability}</span>
-                      </span>
-                      {entry.attempted_at && (
-                        <span className="font-mono shrink-0">{entry.attempted_at.slice(11, 19)}</span>
-                      )}
-                    </div>
-
-                    {entry.error_code && (
-                      <div className="text-[10px] text-rose-600 bg-rose-50 px-2 py-0.5 rounded font-mono">
-                        错误代码: {entry.error_code}
+                  {/* 组内调用明细：模型 + 能力 + 状态 + 单次耗时 */}
+                  <div className="space-y-1 pl-3.5 border-l border-slate-200/70 ml-1">
+                    {group.entries.map((entry, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 text-[10px]">
+                        <span className="flex items-center gap-1 min-w-0">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              entry.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
+                            }`}
+                          />
+                          <span className="font-mono text-slate-700 truncate">{entry.model_name}</span>
+                        </span>
+                        <span className="flex items-center gap-1.5 shrink-0 text-slate-400">
+                          <span className="font-mono">{entry.capability}</span>
+                          {entry.elapsed_ms ? (
+                            <span className="font-mono text-slate-300">
+                              {(entry.elapsed_ms / 1000).toFixed(1)}s
+                            </span>
+                          ) : null}
+                        </span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
               ))}
@@ -383,6 +439,7 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
           )}
         </div>
 
+        {/* Quality Audit Section */}
         {/* Quality Audit Section */}
         <div className="space-y-2 pt-2 border-t border-slate-100">
           <div className="flex items-center justify-between">
