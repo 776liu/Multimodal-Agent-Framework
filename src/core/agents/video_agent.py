@@ -11,6 +11,7 @@
 产物：Artifact(video)，携带 prompt 与首帧信息，供 Reviewer 校验与前端渲染。
 """
 from src.core.base_agent import BaseAgent
+from src.core.prompt_policy import apply_no_text
 from src.core.contracts import (
     Artifact,
     AgentMessage,
@@ -37,6 +38,8 @@ class VideoAgent(BaseAgent):
     def _run(self, message: AgentMessage, context: TaskContext,
              model_info: dict) -> AgentResponse:
         ref_image = message.first_image_url
+        # 压制模型自发的伪文字/水印（模型固有缺陷，prompt 层面规避）
+        prompt = apply_no_text(message.prompt, is_video=True)
 
         # 视频为异步长任务，LLMClient 内部已实现提交+轮询与超时预算
         self.model_invoked = True
@@ -45,7 +48,7 @@ class VideoAgent(BaseAgent):
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
             api_key=model_info["api_key"],
-            prompt=message.prompt,
+            prompt=prompt,
             output_type="video",
             image_url=ref_image,
         )
@@ -67,7 +70,7 @@ class VideoAgent(BaseAgent):
             url,
             step=message.step,
             model=model_info["model_name"],
-            prompt=message.prompt,
+            prompt=prompt,
             mode="image-to-video" if ref_image else "text-to-video",
             first_frame=ref_image or "",
         )
