@@ -1,25 +1,79 @@
+# 模型注册配置模板（config/models.example.yaml）
+#
+# 使用方式:
+#   cp config/models.example.yaml config/model.yaml
+#   然后将 api_key 替换为真实密钥（config/model.yaml 已被 .gitignore 忽略）
+#
+# 同一平台（如硅基流动）的模型共用一个 API Key 即可；
+# 混合平台时按模型逐条配置各自的 Key。
+#
+# 字段说明:
+#   registered_name - 本地注册名，Router 用它做主备切换跳过标记，需唯一
+#   model_name      - 平台真实模型标识，直接传给 API 的 "model" 字段
+#   endpoint        - 平台接口地址
+#   api_key         - 平台密钥
+#   capability      - 能力标签:
+#       text-generation   纯文本生成
+#       image-to-text     看图写作（VLM）
+#       image-generation  文生图 / 图生图
+#       video-generation  文生视频
+#       image-to-video    图生视频（以图为首帧）
+
 models:
-  - model_name: "task-router-model"
-    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+  # ---- 文本（Orchestrator 拆解 + Writer Agent）----
+  - registered_name: "task-router-model"
+    model_name: "deepseek-ai/DeepSeek-V3"
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions"
     api_key: "sk-xxxxxxxxxxxx"
     capability: "text-generation"
 
-  - model_name: "model-x"
-    endpoint: "https://dashscope.aliyuncs.com/..."
+  - registered_name: "writer-primary"
+    model_name: "deepseek-ai/DeepSeek-V3"
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions"
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "text-generation"
+
+  - registered_name: "writer-backup"
+    model_name: "Qwen/Qwen2.5-7B-Instruct"
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions"
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "text-generation"
+
+  # ---- 图像（Image Agent）----
+  - registered_name: "image-primary"
+    model_name: "Tongyi-MAI/Z-Image-Turbo"
+    endpoint: "https://api.siliconflow.cn/v1/images/generations"
     api_key: "sk-xxxxxxxxxxxx"
     capability: "image-generation"
 
-  - model_name: "model-y"
-    endpoint: "https://dashscope.aliyuncs.com/..."
+  - registered_name: "image-backup"
+    model_name: "Kwai-Kolors/Kolors"
+    endpoint: "https://api.siliconflow.cn/v1/images/generations"
     api_key: "sk-xxxxxxxxxxxx"
     capability: "image-generation"
 
-  - model_name: "model-a"
-    endpoint: "https://dashscope.aliyuncs.com/..."
+  # ---- 视觉理解（Writer Agent 带图输入时路由至此）----
+  - registered_name: "vlm-primary"
+    model_name: "Qwen/Qwen3-VL-32B-Instruct"
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions"
     api_key: "sk-xxxxxxxxxxxx"
-    capability: "text-generation"
+    capability: "image-to-text"
 
-  - model_name: "model-b"
-    endpoint: "https://dashscope.aliyuncs.com/..."
+  - registered_name: "vlm-backup"
+    model_name: "Qwen/Qwen3-VL-8B-Instruct"
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions"
     api_key: "sk-xxxxxxxxxxxx"
-    capability: "text-generation"
+    capability: "image-to-text"
+
+  # ---- 视频（Video Agent，异步提交 + 轮询，实测约 3-6 分钟）----
+  - registered_name: "video-t2v"
+    model_name: "Wan-AI/Wan2.2-T2V-A14B"
+    endpoint: "https://api.siliconflow.cn/v1/video/submit"
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "video-generation"
+
+  - registered_name: "video-i2v"
+    model_name: "Wan-AI/Wan2.2-I2V-A14B"
+    endpoint: "https://api.siliconflow.cn/v1/video/submit"
+    api_key: "sk-xxxxxxxxxxxx"
+    capability: "image-to-video"

@@ -1,0 +1,10 @@
+# 运行时依赖
+fastapi>=0.110
+uvicorn>=0.29
+redis>=5.0
+requests>=2.31
+pyyaml>=6.0
+openai>=1.30          # 部分平台 SDK 兼容调用
+pydantic>=2.6
+
+# 前端依赖见 frontend/package.json（npm install）
