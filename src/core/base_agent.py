@@ -105,8 +105,11 @@ class BaseAgent(ABC):
             # NEED_REVISION 是终态而非模型故障：内容质量不达标，
             # 换模型重试无意义（问题在产物不在模型），
             # 交由 Orchestrator 依据 issues 决定是否重做整个步骤。
+            # 注意：同样受 model_invoked 守卫 —— 规则快筛返回的打回
+            # 未发生模型调用，不得写入虚假链路记录（与 SUCCESS/FAILED 一致）。
             if response.status == STATUS_NEED_REVISION:
-                self._record_chain(model_info, capability, "NEED_REVISION")
+                if self.model_invoked:
+                    self._record_chain(model_info, capability, "NEED_REVISION")
                 return response
 
             last_response = response
