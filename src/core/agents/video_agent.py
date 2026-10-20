@@ -40,6 +40,7 @@ class VideoAgent(BaseAgent):
 
         # 视频为异步长任务，LLMClient 内部已实现提交+轮询与超时预算
         self.model_invoked = True
+        self._mark_call_start()
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
