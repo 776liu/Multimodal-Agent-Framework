@@ -8,6 +8,7 @@
 - 产物：Artifact(image)，携带 prompt 与参考图信息，供下游（如 Video Agent）复用。
 """
 from src.core.base_agent import BaseAgent
+from src.core.prompt_policy import apply_no_text
 from src.core.contracts import (
     Artifact,
     AgentMessage,
@@ -30,6 +31,8 @@ class ImageAgent(BaseAgent):
              model_info: dict) -> AgentResponse:
         # 有上游图片则走图生图，否则文生图
         ref_image = message.first_image_url
+        # 压制模型自发的伪文字/水印（模型固有缺陷，prompt 层面规避）
+        prompt = apply_no_text(message.prompt, is_video=False)
 
         self.model_invoked = True
         self._mark_call_start()
@@ -37,7 +40,7 @@ class ImageAgent(BaseAgent):
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],
             api_key=model_info["api_key"],
-            prompt=message.prompt,
+            prompt=prompt,
             output_type="image",
             image_url=ref_image,
         )
@@ -59,7 +62,7 @@ class ImageAgent(BaseAgent):
             url,
             step=message.step,
             model=model_info["model_name"],
-            prompt=message.prompt,
+            prompt=prompt,
             mode="image-to-image" if ref_image else "text-to-image",
             reference_image=ref_image or "",
         )
