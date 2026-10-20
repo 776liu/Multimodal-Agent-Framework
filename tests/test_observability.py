@@ -18,21 +18,34 @@ from src.core.models import CallChainEntry, BuilderInput
 from src.core.builder import Builder
 from src.core.storage import Storage
 from src.core.base_agent import BaseAgent
-from src.core.contracts import Artifact, AgentMessage, AgentResponse, TaskContext
+from src.core.contracts import (
+    Artifact, AgentMessage, AgentResponse, TaskContext, STATUS_NEED_REVISION,
+)
 from src.core.router import Router
+from src.core.agents import ReviewerAgent
 from src.api.task_manager import MemoryTaskManager
 
 
 class _StubLLM:
-    def __init__(self, delay=0.0):
+    def __init__(self, delay=0.0, review_json=None):
         self.delay = delay
+        self.review_json = review_json
         self.calls = 0
 
     def call(self, model_name, endpoint, api_key, prompt, output_type, image_url=""):
+        """返回真实 LLMResponse 形状（.data.content），与生产 llm_client 一致"""
+        from src.core.models import LLMResponse, TaskResult
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)
-        return AgentResponse.success("llm", artifacts=[Artifact.text_of("一段足够长的产物内容。")])
+        # 审查调用（ReviewAgent 的 prompt 含"质量审查员"）按预设 JSON 返回
+        if "质量审查员" in prompt and self.review_json is not None:
+            return LLMResponse(status="SUCCESS",
+                               data=TaskResult(type="text", content=self.review_json),
+                               model_name=model_name)
+        return LLMResponse(status="SUCCESS",
+                           data=TaskResult(type="text", content="一段足够长的产物内容。"),
+                           model_name=model_name)
 
 
 class _NamedAgent(BaseAgent):
@@ -55,9 +68,9 @@ def _router():
     return Router([ModelInfo("m1", "model-A", "e", "k", "text-generation")])
 
 
-def _msg(step=1):
+def _msg(step=1, receiver="writer_agent", artifacts=None):
     return AgentMessage(task_id="t1", step=step, sender="orchestrator",
-                        receiver="writer_agent", prompt="p")
+                        receiver=receiver, prompt="p", artifacts=artifacts or [])
 
 
 # ==================================================================
@@ -278,3 +291,129 @@ def test_agents_endpoint_shape_uses_internal_id():
     assert out["internal_task_id"] == "task_internal_xyz"
     assert out["roles"] == ["orchestrator", "writer_agent"]
     assert out["message_count"] == 1
+
+
+# ==================================================================
+# 回归：NEED_REVISION 分支的调用链守卫（review 发现的漏网分支）
+# ==================================================================
+def test_need_revision_without_model_call_leaves_no_chain_entry():
+    """规则快筛的打回未发生模型调用，不得写入耗时 0ms 的假记录"""
+    agent = ReviewerAgent(_router(), _StubLLM())
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent", artifacts=[Artifact.text_of("短")]),
+        TaskContext(task_id="t1", max_retries=0),
+    )
+    assert resp.status == STATUS_NEED_REVISION
+    assert agent.drain_call_chain() == [], "规则打回未调模型，链路必须为空"
+
+
+def test_need_revision_with_model_call_records_chain():
+    """LLM 审查的打回真实调用了模型，链路必须记录且带角色名与耗时"""
+    review = json.dumps({"score": 2, "issues": ["事实错误"], "pass": False}, ensure_ascii=False)
+    agent = ReviewerAgent(_router(), _StubLLM(review_json=review))
+    resp = agent.execute(
+        _msg(receiver="reviewer_agent",
+             artifacts=[Artifact.text_of("这是一段足够长但内容有事实错误的文本。")]),
+        TaskContext(task_id="t1", max_retries=0),
+    )
+    assert resp.status == STATUS_NEED_REVISION
+    chain = agent.drain_call_chain()
+    assert len(chain) == 1
+    assert chain[0].agent == "reviewer_agent"
+    assert chain[0].elapsed_ms >= 0
+
+
+# ==================================================================
+# 降级场景：同一 Agent 连续多条链路的 elapsed_ms 窗口（review 盲区 1）
+# ==================================================================
+def test_fallback_chain_records_separate_elapsed_windows():
+    """降级换模型时，第二条链路的耗时窗口必须从第二次调用重新计时，
+    而不是累计从第一次调用开始的时间（否则耗时数据失真）"""
+
+    class _DelayedLLM:
+        """主模型慢(80ms)失败，备选快(20ms)成功，用以区分两条耗时"""
+        def __init__(self):
+            self.calls = []
+
+        def call(self, model_name, endpoint, api_key, prompt, output_type, image_url=""):
+            self.calls.append(model_name)
+            time.sleep(0.08 if model_name == "slow-A" else 0.02)
+            if model_name == "slow-A":
+                return AgentResponse.failed("llm", error_code=503)
+            return AgentResponse.success("llm", artifacts=[Artifact.text_of("x" * 20)])
+
+    from src.core.models import ModelInfo
+    router = Router([
+        ModelInfo("slow-A", "slow-A", "e", "k", "text-generation"),
+        ModelInfo("fast-B", "fast-B", "e", "k", "text-generation"),
+    ])
+    agent = _NamedAgent("writer_agent", router, _DelayedLLM())
+    agent.execute(_msg(), TaskContext(task_id="t1", max_retries=2))
+
+    chain = agent.drain_call_chain()
+    assert len(chain) == 2
+    first, second = chain
+
+    # 各自窗口独立：第一条 ≈ 80ms，第二条 ≈ 20ms
+    assert first.model_name == "slow-A" and first.status == "FAILED"
+    assert second.model_name == "fast-B" and second.status == "SUCCESS"
+    assert 50 <= first.elapsed_ms <= 500, f"首条耗时窗口异常: {first.elapsed_ms}ms"
+    assert second.elapsed_ms < first.elapsed_ms, (
+        f"第二条窗口应独立计时(应≈20ms)，实际 {second.elapsed_ms}ms ≥ 首条 {first.elapsed_ms}ms"
+    )
+
+
+# ==================================================================
+# 契约：Worker 写入的进度 payload 与前端消费字段对齐（review 盲区 2）
+# ==================================================================
+def test_progress_payload_contract_for_frontend():
+    """前端角色卡消费的字段: stage/agent/step/total/status/issues/notice/ts
+
+    该测试锁死 Worker 落入进度通道的 payload 形状：
+    任何一端改名都会在此处失败，而不是前端静默显示空白。
+    """
+    from src.core.orchestrator import Orchestrator
+    from src.core.registry import AgentRegistry
+    from src.core.message_bus import MessageBus
+    from src.core.task_router import TaskRouter
+    from src.core.memory import Memory
+    from src.core.models import Subtask, ExecutionPlan
+    from src.core.agents import WriterAgent, ReviewerAgent
+
+    class _StubTR:
+        def route_task(self, ui):
+            return ExecutionPlan(intent="x", task_id="p", subtasks=[
+                Subtask(step=1, capability="text-generation", prompt="p")])
+
+    r = _router()
+    reg = AgentRegistry()
+    reg.register_all([WriterAgent(r, _StubLLM()), ReviewerAgent(r, _StubLLM())])
+    bus = MessageBus()
+    bus.register(reg.get("writer_agent"))
+    bus.register(reg.get("reviewer_agent"))
+
+    orch = Orchestrator(task_router=_StubTR(), registry=reg, message_bus=bus,
+                        builder=Builder(), memory=Memory())
+    captured = []
+
+    # 模拟 Worker._make_progress 的落通道动作：只补 ts，不改其他字段
+    def _on_progress(event):
+        payload = dict(event)
+        payload.setdefault("ts", time.time())
+        captured.append(payload)
+
+    orch.run("p", "s1", on_progress=_on_progress)
+
+    assert captured, "Orchestrator 未发出任何进度事件"
+
+    required = {"stage", "ts"}
+    dispatch_events = [e for e in captured if e["stage"] == "dispatching"]
+    assert dispatch_events, "缺少 dispatching 事件"
+
+    for e in captured:
+        missing = required - set(e.keys())
+        assert not missing, f"进度事件缺字段 {missing}，前端将显示空白"
+
+    # dispatching 事件必须带 agent（前端角色卡逐节点点亮的数据源）
+    assert all(e.get("agent") for e in dispatch_events), \
+        "dispatching 事件缺 agent 字段，角色卡将无法渲染角色名"
