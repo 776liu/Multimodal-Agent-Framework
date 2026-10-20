@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { taskApi } from '../api/task';
-import type { TaskDetail } from '../types';
+import type { TaskDetail, ProgressEvent, AgentTraceResponse } from '../types';
 
 /**
  * 任务超时预算分层：
@@ -26,10 +26,16 @@ interface TaskState {
   error: string | null;
   /** 已等待时长（毫秒），供 UI 展示"已等待 x 分 y 秒" */
   elapsedMs: number;
+  /** 实时进度事件（工单 T-01）：轮询过程中增量拉取，供角色卡逐节点点亮 */
+  progressEvents: ProgressEvent[];
+  /** 多 Agent 调度轨迹（工单 T-01）：任务终态后一次性拉取，用于渲染协作视图 */
+  agentTrace: AgentTraceResponse | null;
 
   submitTask: (userInput: string, sessionId: string) => Promise<TaskDetail | null>;
   setCurrentTask: (task: TaskDetail | null) => void;
   clearError: () => void;
+  /** 按 taskId 拉取某次任务的调度轨迹（供历史回放复用） */
+  loadAgentTrace: (taskId: string) => Promise<void>;
 }
 
 export const useTaskStore = create<TaskState>((set) => ({
@@ -39,10 +45,14 @@ export const useTaskStore = create<TaskState>((set) => ({
   taskHistory: [],
   error: null,
   elapsedMs: 0,
+  progressEvents: [],
+  agentTrace: null,
 
   submitTask: async (userInput: string, sessionId: string) => {
-    set({ isExecuting: true, error: null, elapsedMs: 0 });
+    set({ isExecuting: true, error: null, elapsedMs: 0, progressEvents: [], agentTrace: null });
     const startedAt = Date.now();
+    // 增量拉取进度事件已消费的条数，避免重复累积
+    let consumedEvents = 0;
     try {
       const res = await taskApi.submitTask(userInput, sessionId);
       const taskId = res.task_id;
@@ -51,18 +61,39 @@ export const useTaskStore = create<TaskState>((set) => ({
       // 视频类任务使用更长预算，其余走默认预算
       const completedTask = await taskApi.pollTaskUntilDone(
         taskId,
-        (progressTask: TaskDetail) => {
+        async (progressTask: TaskDetail) => {
           set({ currentTask: progressTask, elapsedMs: Date.now() - startedAt });
+          // 增量拉取进度事件（工单 T-01）：失败静默，不影响任务轮询
+          try {
+            const events = await taskApi.getProgress(taskId);
+            if (events.length > consumedEvents) {
+              consumedEvents = events.length;
+              set({ progressEvents: events });
+            }
+          } catch {
+            /* 进度事件不可用时降级为纯轮询 */
+          }
         },
         2000, // 2s 轮询间隔（视频任务下可降低请求频率）
         resolveTimeoutMs(userInput)
       );
+
+      // 终态后补齐：完整事件序列 + 多 Agent 调度轨迹
+      let trace: AgentTraceResponse | null = null;
+      try {
+        const events = await taskApi.getProgress(taskId);
+        if (events.length > 0) set({ progressEvents: events });
+        trace = await taskApi.getAgents(taskId);
+      } catch {
+        /* 轨迹接口异常时保持已有数据 */
+      }
 
       set((state) => ({
         currentTask: completedTask,
         activeTaskId: null,
         isExecuting: false,
         elapsedMs: Date.now() - startedAt,
+        agentTrace: trace ?? state.agentTrace,
         taskHistory: [completedTask, ...state.taskHistory.slice(0, 19)],
       }));
 
@@ -86,6 +117,18 @@ export const useTaskStore = create<TaskState>((set) => ({
 
   setCurrentTask: (task: TaskDetail | null) => {
     set({ currentTask: task });
+  },
+
+  loadAgentTrace: async (taskId: string) => {
+    try {
+      const [events, trace] = await Promise.all([
+        taskApi.getProgress(taskId),
+        taskApi.getAgents(taskId),
+      ]);
+      set({ progressEvents: events, agentTrace: trace });
+    } catch (err) {
+      console.error('Failed to load agent trace:', err);
+    }
   },
 
   clearError: () => {

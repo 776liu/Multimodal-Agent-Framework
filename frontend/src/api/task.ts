@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { TaskDetail } from '../types';
+import type { TaskDetail, ProgressEvent, AgentTraceResponse } from '../types';
 
 export const taskApi = {
   // 提交任务
@@ -54,4 +54,33 @@ export const taskApi = {
 
     throw new Error('Task polling timed out');
   },
+
+  // 任务进度事件流（工单 T-01）：Orchestrator 执行过程中发出的 stage/agent 事件
+  getProgress: async (taskId: string): Promise<ProgressEvent[]> => {
+    const res = await apiClient.get<{ task_id: string; events: ProgressEvent[] }>(
+      `/task/${taskId}/progress`
+    );
+    return res.data.events || [];
+  },
+
+  // 多 Agent 调度轨迹（工单 T-01）：派发/回收的消息流
+  getAgents: async (taskId: string): Promise<AgentTraceResponse> => {
+    const res = await apiClient.get<AgentTraceResponse>(`/task/${taskId}/agents`);
+    return res.data;
+  },
+};
+
+
+/** 任务进度事件流（工单 T-01） */
+export const getTaskProgress = async (taskId: string): Promise<ProgressEvent[]> => {
+  const res = await apiClient.get<{ task_id: string; events: ProgressEvent[] }>(
+    `/task/${taskId}/progress`
+  );
+  return res.data.events || [];
+};
+
+/** 多 Agent 调度轨迹（工单 T-01） */
+export const getTaskAgents = async (taskId: string): Promise<AgentTraceResponse> => {
+  const res = await apiClient.get<AgentTraceResponse>(`/task/${taskId}/agents`);
+  return res.data;
 };
