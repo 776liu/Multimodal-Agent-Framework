@@ -46,7 +46,10 @@ class Builder:
                     "capability" : c.capability,
                     "status" : c.status,
                     "error_code" : c.error_code,
-                    "attempted_at" : c.attempted_at
+                    "attempted_at" : c.attempted_at,
+                    # 多 Agent 可观测性字段（工单 T-01）
+                    "agent" : c.agent,
+                    "elapsed_ms" : c.elapsed_ms,
                 }
                 for c in input.call_chain
             ],

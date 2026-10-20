@@ -75,6 +75,68 @@ async def get_task(task_id: str, request: Request):
     else:
         raise HTTPException(status_code=404, detail="Task not found")
 
+
+@app.get("/api/task/{task_id}/progress")
+async def get_task_progress(task_id: str, request: Request):
+    """任务进度事件流（工单 T-01）
+
+    返回 Orchestrator 在执行过程中发出的事件序列，事件结构：
+        {stage, agent, step, total, status, ts}
+    stage ∈ planning / planned / dispatching / collecting / auditing / revision
+    """
+    task_manager = request.app.state.task_manager
+    events = task_manager.get_progress(task_id)
+    return {"task_id": task_id, "events": events, "count": len(events)}
+
+
+@app.get("/api/task/{task_id}/agents")
+async def get_task_agents(task_id: str, request: Request):
+    """多 Agent 调度轨迹（工单 T-01）
+
+    读取 agent_messages 表，还原 Orchestrator 与各专业 Agent 的消息流：
+    派发(dispatch) → 回收(result)，按步骤分组，含产物类型与状态。
+    """
+    task_manager = request.app.state.task_manager
+    storage = request.app.state.storage
+    # agent_messages 记录的是引擎内部task_id，需经映射转换
+    internal_id = task_manager.resolve_internal_task_id(task_id)
+    messages = storage.get_agent_messages(internal_id)
+
+    # 按 step 分组还原调度轨迹
+    trace = {}
+    order = []
+    for m in messages:
+        step = m.get("step", 0)
+        if step not in trace:
+            trace[step] = {"step": step, "entries": []}
+            order.append(step)
+        entry = {
+            "from_agent": m["from_agent"],
+            "to_agent": m["to_agent"],
+            "message_type": m["message_type"],
+            "status": m.get("status"),
+            "content": (m.get("content") or "")[:200],
+            "artifacts": [
+                {"type": a.get("type"), "url": a.get("content", "")[:120]}
+                for a in (m.get("artifacts") or [])
+            ],
+            "created_at": m.get("created_at"),
+        }
+        trace[step]["entries"].append(entry)
+
+    # 汇总参与过的 Agent 角色
+    roles = sorted({
+        m["from_agent"] for m in messages
+    } | {m["to_agent"] for m in messages})
+
+    return {
+        "task_id": task_id,
+        "internal_task_id": internal_id,
+        "roles": roles,
+        "steps": [trace[s] for s in sorted(order)],
+        "message_count": len(messages),
+    }
+
 @app.get("/api/session/{session_id}/history")
 async def get_conversation_history(session_id: str, request: Request):
     """获取会话的对话历史和任务历史"""

@@ -44,12 +44,19 @@ class LLMResponse:
 
 @dataclass
 class CallChainEntry:
-    """调用链日志的单条记录"""
+    """调用链日志的单条记录
+
+    agent / elapsed_ms 是多 Agent 可观测性字段（工单 T-01）：
+    单 Agent 多模型调度器只会产生前五个字段，无法证明"多 Agent"的存在。
+    两个字段均有默认值，保证老日志反序列化向后兼容。
+    """
     model_name: str
     capability: str
     status: str
     error_code: Optional[int] = None
     attempted_at: str = ""
+    agent: str = ""            # 发起该调用的 Agent 角色名，如 writer_agent
+    elapsed_ms: int = 0        # 本次模型调用耗时（毫秒）
 
 @dataclass
 class BuilderInput:

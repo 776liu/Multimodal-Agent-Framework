@@ -87,6 +87,7 @@ class ReviewerAgent(BaseAgent):
 
         review_text = self._compose_review_input(reviewable)
         self.model_invoked = True
+        self._mark_call_start()
         resp = self.llm_client.call(
             model_name=model_info["model_name"],
             endpoint=model_info["endpoint"],

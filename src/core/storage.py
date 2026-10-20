@@ -194,7 +194,11 @@ class Storage:
         return [
             {"model_name": c.model_name, "capability": c.capability,
              "status": c.status, "error_code": c.error_code,
-             "attempted_at": c.attempted_at}
+             "attempted_at": c.attempted_at,
+             # 多 Agent 可观测性字段（工单 T-01）：
+             # 落库侧必须同步补齐，否则历史任务回放看不到角色名
+             "agent": getattr(c, "agent", ""),
+             "elapsed_ms": getattr(c, "elapsed_ms", 0)}
             for c in chain
         ]
 
@@ -344,7 +348,8 @@ class Storage:
         """获取某个会话的任务历史（最近 N 条，含 user_input 与调用链，供前端恢复/回放）"""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT task_id, task_status, frontend_json, log_json, user_input, created_at "
+                "SELECT task_id, task_status, frontend_json, log_json, call_chain_json, "
+                "user_input, created_at "
                 "FROM task_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
                 (session_id, limit),
             ).fetchall()
@@ -353,13 +358,30 @@ class Storage:
                 frontend = json.loads(row["frontend_json"] or "{}")
                 log = json.loads(row["log_json"] or "{}")
                 results_data = frontend.get("data", {})
+
+                # call_chain 优先取 log_json 内嵌的；缺失时回退到专用列
+                # call_chain_json，避免历史数据回放丢失调用链
+                chain_src = log.get("call_chain") or json.loads(row["call_chain_json"] or "[]")
                 result.append({
                     "task_id": row["task_id"],
                     "task_status": row["task_status"],
                     "created_at": row["created_at"],
                     "user_input": row["user_input"] or "",
                     "summary": results_data.get("results", []),
-                    "call_chain": log.get("call_chain", []),
+                    # 归一化：老日志的 call_chain 缺 agent/elapsed_ms 键，
+                    # 直接透传会导致前端取值 KeyError（工单 T-01）
+                    "call_chain": [
+                        {
+                            "model_name": e.get("model_name", ""),
+                            "capability": e.get("capability", ""),
+                            "status": e.get("status", ""),
+                            "error_code": e.get("error_code"),
+                            "attempted_at": e.get("attempted_at", ""),
+                            "agent": e.get("agent", ""),
+                            "elapsed_ms": e.get("elapsed_ms", 0),
+                        }
+                        for e in (chain_src or [])
+                    ],
                     "error_summary": log.get("error_summary", []),
                 })
             return result

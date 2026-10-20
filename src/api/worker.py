@@ -36,8 +36,32 @@ class Worker:
 
                 self.task_manager.update_task(task_id, "processing")
 
+                # 进度事件出口（工单 T-01）：此前 agent.run() 未传 on_progress，
+                # Orchestrator 发出的 stage/agent 事件全部在进程内蒸发。
+                # 现写入 Redis 进度通道，供前端轮询 /progress 实时展示。
+                def _make_progress(task_id=task_id):
+                    def _on_progress(event: dict):
+                        try:
+                            payload = dict(event)
+                            payload.setdefault("ts", time.time())
+                            self.task_manager.append_progress(task_id, payload)
+                        except Exception:
+                            pass  # 进度记录失败不阻断任务
+                    return _on_progress
+
                 try:
-                    result = self.agent.run(user_input, session_id)
+                    result = self.agent.run(user_input, session_id,
+                                            on_progress=_make_progress())
+
+                    # 登记 外部任务ID → 引擎内部task_id 映射（工单 T-01）：
+                    # agent_messages / task_logs 记录的是内部ID，
+                    # 前端持有的却是 Redis 队列的外部ID，需要映射才能关联查询
+                    internal_id = (result.get("log_record") or {}).get("task_id")
+                    if internal_id:
+                        try:
+                            self.task_manager.link_internal_task_id(task_id, internal_id)
+                        except Exception:
+                            pass
                     final_status = result["frontend_response"]["task_status"]
                     self.task_manager.update_task(task_id, final_status, result)
 

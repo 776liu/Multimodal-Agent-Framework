@@ -50,6 +50,7 @@ class BaseAgent(ABC):
         self.call_chain: List[CallChainEntry] = []
         # 是否真实发起过模型调用（子类短路时置 False）
         self.model_invoked = False
+        self._call_started_at = None   # 本次模型调用起始时间戳
 
     # ------------------------------------------------------------------
     # 子类实现入口
@@ -72,6 +73,7 @@ class BaseAgent(ABC):
 
         failed_models: List[str] = []
         last_response: Optional[AgentResponse] = None
+        self._call_started_at = None
         # 本次执行是否真的发起了模型调用。
         # 子类若在本地规则层短路（如 Reviewer 规则核验媒体产物），
         # 应置为 False，避免调用链出现"并未发生的模型调用"记录。
@@ -127,15 +129,31 @@ class BaseAgent(ABC):
         """
         return self.capability
 
+    def _mark_call_start(self) -> None:
+        """标记一次模型调用开始（Agent 在 llm_client.call 前调用）"""
+        self._call_started_at = time.time()
+
     def _record_chain(self, model_info: dict, capability: str, status: str,
                       error_code: Optional[int] = None) -> None:
-        """记录一条调用链（供 Orchestrator 汇总落库）"""
+        """记录一条调用链（供 Orchestrator 汇总落库）
+
+        附带角色名与本次调用耗时（工单 T-01）：
+        前者是"多 Agent 而非多模型调度"的直接证据。
+        """
+        now = time.time()
+        elapsed_ms = 0
+        started = getattr(self, "_call_started_at", None)
+        if started is not None:
+            elapsed_ms = int((now - started) * 1000)
+
         self.call_chain.append(CallChainEntry(
             model_name=model_info.get("model_name", "unknown"),
             capability=capability,
             status=status,
             error_code=error_code,
-            attempted_at=str(time.time()),
+            attempted_at=str(now),
+            agent=self.name,
+            elapsed_ms=elapsed_ms,
         ))
 
     def artifacts_from_response(self, response: AgentResponse) -> List[Artifact]:
