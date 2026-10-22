@@ -47,7 +47,8 @@ class RedisTaskManager(TaskManager):
                  expire_seconds: int = 3600,
                  task_prefix: str = "agent:task:",
                  progress_prefix: str = "agent:progress:",
-                 id_map_prefix: str = "agent:idmap:"):
+                 id_map_prefix: str = "agent:idmap:",
+                 queue_keys: dict = None):
         pool = redis.ConnectionPool(host=host, port=port, decode_responses=True)
         self.client = redis.Redis(connection_pool=pool)
         self.queue_key = queue_key
@@ -55,6 +56,9 @@ class RedisTaskManager(TaskManager):
         self._task_prefix = task_prefix
         self._progress_prefix = progress_prefix
         self._id_map_prefix = id_map_prefix
+        # 车道→队列名映射，可注入覆盖；测试用独立队列名隔离，
+        # 避免与正在运行的服务端 Worker 抢占任务。
+        self.queue_keys = dict(queue_keys) if queue_keys else dict(QUEUE_KEYS)
 
     def _task_key(self, task_id: str)-> str:
         """拼接前缀"""
@@ -81,7 +85,7 @@ class RedisTaskManager(TaskManager):
                           }
                         )
         self.client.expire(self._task_key(task_id), self.expire_seconds)
-        self.client.lpush(QUEUE_KEYS[lane], task_id)
+        self.client.lpush(self.queue_keys[lane], task_id)
         return {"task_id": task_id, "status": "pending", "lane": lane}
 
     def get_task(self, task_id: str) -> dict:
@@ -117,7 +121,7 @@ class RedisTaskManager(TaskManager):
         极易造成调用方卡死。这里约定 timeout<=0 为"非阻塞取一次"（RPOP），
         与直觉一致，也便于测试与优雅退出。
         """
-        queue = QUEUE_KEYS.get(lane, self.queue_key)
+        queue = self.queue_keys.get(lane, self.queue_key)
         if timeout and timeout > 0:
             result = self.client.brpop(queue, timeout=timeout)
             task_id = result[1] if result else None
@@ -140,7 +144,7 @@ class RedisTaskManager(TaskManager):
             "status": "pending", "lane": lane,
         })
         self.client.expire(self._task_key(task_id), self.expire_seconds)
-        self.client.lpush(QUEUE_KEYS[lane], task_id)
+        self.client.lpush(self.queue_keys[lane], task_id)
     
     def get_task_by_session(self, session_id: str) -> list:
         """返回指定会话下所有进行中的任务"""

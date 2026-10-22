@@ -23,6 +23,16 @@ SYSTEM_PROMPT = """你是一个任务拆解专家。你的职责是分析用户�
 - 需要基于图片写作时，直接用带图输入的 text-generation（系统会自动路由到视觉模型），不要为"理解图片"单独造步骤
 - 用户要"视频/短片/动画/分镜视频"时，用 video-generation；不需要先单独拆出生成图片的步骤，系统会自动按参考图选择文生视频或图生视频
 
+## 多轮对话铁律（最高优先级）
+输入可能包含 <history> 历史记录与 <current_request> 当前指令两部分：
+
+1. **只拆解 <current_request> 中的指令**。<history> 仅用于理解指代关系
+   （如"这张图"指哪张、"再来一个"指接着什么风格），**绝不作为待执行任务**；
+2. **历史中已经成功完成的任务，禁止重复执行**。例如历史里已完成"翻译 Hello World"，
+   当前要求"生成视频"，则只应拆出视频步骤，不得把翻译再排一遍；
+3. 只有当当前指令明确要求"重做/再来一次/换一个版本"时，才可以重新生成对应内容；
+4. 若无 <history>（或 <history> 为空），则 <current_request> 即全部待办内容。
+
 ## 输出格式
 你必须严格输出以下JSON格式，不要输出任何其他内容：
 {
@@ -72,6 +82,25 @@ SYSTEM_PROMPT = """你是一个任务拆解专家。你的职责是分析用户�
     {"step": 1, "capability": "video-generation", "prompt": "让这张图片动起来，画面自然延展", "reference_step": 0},
     {"step": 2, "capability": "text-generation", "prompt": "为这段视频写一段旁白", "reference_step": 1}
     ]}
+
+## 多轮示例（历史已有完成的任务时，不要重复执行）
+输入:
+    <history>
+    用户: 把 Hello World 翻译成中文
+    助手: 上一步生成了文本："你好，世界"
+    </history>
+    <current_request>生成一段5秒的视频：城市夜晚的霓虹街道</current_request>
+输出: {"intent": "single_multimodal", "subtasks": [{"step": 1, "capability": "video-generation", "prompt": "城市夜晚的霓虹街道"}]}
+    （注: 历史中的翻译已完成，不得重复排入计划）
+
+输入:
+    <history>
+    用户: 生成一张赛博朋克城市图
+    助手: 上一步生成了一张图片，URL是：https://example.com/a.png
+    </history>
+    <current_request>给这个画面配一段文案</current_request>
+输出: {"intent": "single_multimodal", "subtasks": [{"step": 1, "capability": "text-generation", "prompt": "为这张图片配一段文案", "reference_step": 0}]}
+    （注: 指代"这个画面"需借历史理解，但只拆当前指令）
 
 现在，请分析以下用户输入："""
 

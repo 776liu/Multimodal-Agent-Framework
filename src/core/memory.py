@@ -39,15 +39,35 @@ class Memory:
         return self.sessions.get(session_id, [])
     
     def build_context(self, session_id: str, current_input: str) -> str:
-        """ 
-        将历史对话和当前输入拼成完整上下文，传给 TaskRouter。
-        如果没有历史，直接返回当前输入。
+        """将历史对话与当前指令拼成结构化上下文，供 TaskRouter 拆解。
+
+        输出结构（有历史时）：
+            <history>
+            用户: ...
+            助手: ...
+            </history>
+            <current_request>当前指令</current_request>
+
+        无历史时直接返回 current_input（不加标记，保持单轮语义简洁）。
+
+        注意调用约定：调用方通常**先** `add(session_id, "user", current_input)`
+        **再**调用本方法，因此历史末尾那条 user 消息就是当前输入本身。
+        这里会把它从 <history> 中剔除，只在 <current_request> 中出现一次，
+        避免同一指令出现两遍而被模型当成两个待办任务（多轮重复执行的根因之一）。
         """
         history = self.get_history(session_id)
         if not history:
             return current_input
-        
-        context = "以下是之前的对话记录，请根据上下文理解用户的当前需求：\n"
+
+        # 剔除末尾的当前输入（调用方已提前 add 进历史），避免重复出现
+        tail = history[-1]
+        if tail.role == "user" and tail.content.strip() == current_input.strip():
+            history = history[:-1]
+
+        if not history:
+            return current_input
+
+        context = "<history>\n"
         for msg in history:
             if msg.role == "user":
                 context += f"用户: {msg.content}\n"
@@ -62,6 +82,8 @@ class Memory:
                                 parts.append(f"上一步生成了一张图片，URL是：{r['url']}")
                             elif rtype == "text" and r.get("content"):
                                 parts.append(f"上一步生成了文本：{r['content']}")
+                            elif rtype == "video" and r.get("url"):
+                                parts.append(f"上一步生成了一段视频，URL是：{r['url']}")
                         if parts:
                             context += f"助手: {'；'.join(parts)}\n"
                         else:
@@ -70,6 +92,8 @@ class Memory:
                         context += f"助手: {msg.content}\n"
                 except (json.JSONDecodeError, TypeError):
                     context += f"助手: {msg.content}\n"
+        context += "</history>\n"
+        context += f"<current_request>{current_input}</current_request>"
 
         return context
 

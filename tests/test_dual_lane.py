@@ -98,16 +98,27 @@ def _redis_available() -> bool:
         return False
 
 
+# 测试用独立队列名，避免与正在运行的服务端 Worker 抢占同一队列
+# （否则 Worker 会立刻消费掉测试塞进去的任务，造成偶发失败）
+_TEST_QUEUES = {
+    LANE_FAST: "agent:queue:test:fast",
+    LANE_SLOW: "agent:queue:test:slow",
+}
+
+
+def _make_tm():
+    from src.api.redis_task_manager import RedisTaskManager
+    return RedisTaskManager(expire_seconds=30, queue_keys=_TEST_QUEUES)
+
+
 def test_redis_dual_lane_roundtrip():
     """Redis 版：两车道独立入队/出队，且互不串道"""
     if not _redis_available():
         print("  (Redis 不可用，跳过)")
         return
 
-    from src.api.redis_task_manager import RedisTaskManager
-    tm = RedisTaskManager(expire_seconds=30)
-    # 清理可能残留的测试任务
-    tm.client.delete(QUEUE_KEYS[LANE_FAST], QUEUE_KEYS[LANE_SLOW])
+    tm = _make_tm()
+    tm.client.delete(_TEST_QUEUES[LANE_FAST], _TEST_QUEUES[LANE_SLOW])
 
     fast_id = tm.create_task("翻译一段文字", "lane-test", lane=LANE_FAST)["task_id"]
     slow_id = tm.create_task("生成一段视频", "lane-test", lane=LANE_SLOW)["task_id"]
@@ -128,9 +139,8 @@ def test_redis_requeue_to_lane():
         print("  (Redis 不可用，跳过)")
         return
 
-    from src.api.redis_task_manager import RedisTaskManager
-    tm = RedisTaskManager(expire_seconds=30)
-    tm.client.delete(QUEUE_KEYS[LANE_FAST], QUEUE_KEYS[LANE_SLOW])
+    tm = _make_tm()
+    tm.client.delete(_TEST_QUEUES[LANE_FAST], _TEST_QUEUES[LANE_SLOW])
 
     tid = tm.create_task("生成视频", "lane-test", lane=LANE_FAST)["task_id"]
     tm.dequeue(timeout=1, lane=LANE_FAST)          # 被快车道捡走
