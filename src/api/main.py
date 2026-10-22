@@ -25,7 +25,7 @@ class SessionRenameRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：装配引擎 → 创建队列 → 启动 Worker,关闭时通知退出"""
+    """应用生命周期：装配引擎 → 创建队列 → 启动双车道 Worker,关闭时通知退出"""
     agent, storage = create_agent()
 
     task_manager = RedisTaskManager()
@@ -33,14 +33,28 @@ async def lifespan(app: FastAPI):
     app.state.storage = storage
 
     stop_event = threading.Event()
-    worker = Worker(agent, task_manager, storage, stop_event)
-    worker_thread = threading.Thread(target=worker.run, name="api-worker", daemon=True)
-    worker_thread.start()
+
+    # 双车道 Worker（工单 T-05）：视频任务最长 6 分钟，
+    # 若与文本任务共用单线程，演示时"第二个会话问句话"会卡到视频跑完。
+    # 快车道跑 text/image，慢车道跑 video，互不阻塞。
+    workers = [
+        Worker(agent, task_manager, storage, stop_event, lane="fast"),
+        Worker(agent, task_manager, storage, stop_event, lane="slow",
+               requeue_on_mismatch=False),
+    ]
+    worker_threads = []
+    for idx, worker in enumerate(workers):
+        thread = threading.Thread(
+            target=worker.run, name=f"api-worker-{worker.lane}-{idx}", daemon=True
+        )
+        thread.start()
+        worker_threads.append(thread)
 
     yield
 
     stop_event.set()
-    worker_thread.join(timeout=5)
+    for thread in worker_threads:
+        thread.join(timeout=5)
 
 
 app = FastAPI(lifespan=lifespan)

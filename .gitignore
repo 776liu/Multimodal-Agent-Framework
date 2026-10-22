@@ -15,3 +15,8 @@ frontend/dist/
 frontend/.npm-cache/
 frontend/package-lock.json
 uv.lock
+
+# 毕设相关材料不入库（论文正文、框架脚本、系统垃圾文件）
+期末论文框架/
+.DS_Store
+*.docx

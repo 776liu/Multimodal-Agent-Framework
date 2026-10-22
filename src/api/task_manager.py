@@ -22,6 +22,13 @@ class TaskManager(ABC):
     def dequeue(self, timeout = 5):
         pass
 
+    def requeue_to_lane(self, task_id: str, lane: str) -> None:
+        """把任务改派到指定车道（双车道，工单 T-05）
+
+        默认空实现：不支持分车道的实现（如内存版以外的旧实现）可安全继承。
+        """
+        return None
+
     # ---- 进度事件通道（工单 T-01）----
     # 默认实现为内存版，RedisTaskManager 会覆盖为 Redis 版；
     # 两者接口一致，Worker 无需感知底层是哪种实现。
@@ -57,8 +64,10 @@ class MemoryTaskManager(TaskManager):
         self._progress = {}      # task_id -> [event]
         self._progress_ts = {}   # task_id -> 最后写入时间
         self._id_map = {}        # 外部任务ID -> 引擎内部任务ID
+        self._lanes = {}         # task_id -> lane（双车道模拟，工单 T-05）
 
-    def create_task(self, user_input: str, session_id: str) ->dict:
+    def create_task(self, user_input: str, session_id: str,
+                    lane: str = None) ->dict:
         task_id = "task_" + uuid.uuid4().hex
         self._tasks[task_id] = {
             "status": "pending",
@@ -67,7 +76,8 @@ class MemoryTaskManager(TaskManager):
             "result": None,
             "created_at": time.time()
         }
-        return {"task_id": task_id, "status":"pending"}
+        self._lanes[task_id] = lane or "fast"
+        return {"task_id": task_id, "status":"pending", "lane": self._lanes[task_id]}
 
     def get_task(self, task_id: str) ->dict:
         return self._tasks.get(task_id)
@@ -78,17 +88,27 @@ class MemoryTaskManager(TaskManager):
             if result:
                 self._tasks[task_id]["result"] = result
 
-    def dequeue(self, timeout=5):
-        """
-        模拟 BLPOP:返回下一个 pending 任务，没有则等待 timeout 秒后返回 None。
-        实际实现可以简单遍历 _tasks 找 status == 'pending' 的第一个任务。
+    def dequeue(self, timeout=5, lane=None):
+        """取出指定车道下一个 pending 任务；lane 为 None 时不限车道。
+
+        双车道语义与 RedisTaskManager 对齐：Worker 绑定车道后只消费本车道任务。
         """
         with self._lock:
             for task_id, info in self._tasks.items():
-                if info["status"] == "pending":
-                    return task_id, info
+                if info["status"] != "pending":
+                    continue
+                if lane is not None and self._lanes.get(task_id) != lane:
+                    continue
+                return task_id, info
         time.sleep(timeout)
         return None
+
+    def requeue_to_lane(self, task_id: str, lane: str) -> None:
+        """改派任务到指定车道（内存实现）"""
+        with self._lock:
+            if task_id in self._tasks:
+                self._tasks[task_id]["status"] = "pending"
+            self._lanes[task_id] = lane
 
     def get_task_by_session(self, session_id):
         tasks = []

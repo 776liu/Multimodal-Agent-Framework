@@ -8,7 +8,14 @@ import json
 
 
 class Worker:
-    """后台任务消费者：从队列取任务 → 调用 Agent → 写回结果 + 持久化"""
+    """后台任务消费者：从队列取任务 → 调用 Agent → 写回结果 + 持久化
+
+    双车道（工单 T-05）：
+        每个 Worker 实例绑定一条车道（lane），由 main.py 各起一个线程：
+        快车道 Worker 消费 agent:queue（text/image），
+        慢车道 Worker 消费 agent:queue:slow（video）。
+        这样 5 分钟的视频任务只占用慢车道，不再阻塞文本任务。
+    """
 
     def __init__(
         self,
@@ -16,16 +23,21 @@ class Worker:
         task_manager: TaskManager,
         storage: Storage,
         stop_event: threading.Event,
+        lane: str = "fast",
+        requeue_on_mismatch: bool = True,
     ):
         self.agent = agent
         self.task_manager = task_manager
         self.storage = storage
         self.stop_event = stop_event
+        self.lane = lane
+        # 是否启用消费侧纠偏：快车道捡到视频任务时改派到慢车道
+        self.requeue_on_mismatch = requeue_on_mismatch
 
     def run(self):
         while not self.stop_event.is_set():
             try:
-                dequeued = self.task_manager.dequeue()
+                dequeued = self.task_manager.dequeue(lane=self.lane)
                 if dequeued is None:
                     time.sleep(1)
                     continue
@@ -33,6 +45,13 @@ class Worker:
                 task_id, info = dequeued
                 user_input = info["user_input"]
                 session_id = info["session_id"]
+
+                # 消费侧纠偏（工单 T-05）：
+                # 提交时的车道预判可能失误（关键词未命中但实际是视频任务），
+                # 快车道 Worker 捡到这类任务时应改派慢车道，而不是自己跑 5 分钟。
+                if self.requeue_on_mismatch and self._should_requeue(info, user_input):
+                    self.task_manager.requeue_to_lane(task_id, "slow")
+                    continue
 
                 self.task_manager.update_task(task_id, "processing")
 
@@ -97,3 +116,18 @@ class Worker:
                     self.task_manager.update_task(task_id, "FAILED", {"error": str(e)})
             except Exception:
                 time.sleep(1)
+
+    def _should_requeue(self, info: dict, user_input: str) -> bool:
+        """判断快车道捡到的任务是否应改派慢车道。
+
+        仅在快车道生效：慢车道 Worker 无论收到什么都自己处理
+        （改派慢车道→慢车道会造成死循环）。
+        车道判定复用 RedisTaskManager.guess_lane 的规则，保持单一事实来源。
+        """
+        if self.lane != "fast":
+            return False
+        try:
+            from src.api.redis_task_manager import guess_lane
+        except Exception:
+            return False
+        return guess_lane(user_input) == "slow"
