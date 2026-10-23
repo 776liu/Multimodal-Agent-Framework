@@ -6,3 +6,11 @@ app:
   # 视频生成专项参数（后端 LLMClient 同步使用）
   video_poll_budget: 600               # 视频轮询总预算（秒），超时返回可重试错误
   video_poll_interval: 6               # 视频状态轮询间隔（秒）
+
+# Reviewer 严格度（工单 T-04）——三级分级，阈值可调，便于论文做参数对比实验
+reviewer:
+  pass_threshold: 4        # 评分 >= 4：直接通过
+  warn_threshold: 3        # 评分 3~4：通过但记录警告（不触发反思重试，省 Token）
+                           # 评分 < 3：打回，由 Orchestrator 触发重试
+  enable_llm_review: true  # 关闭后仅做规则快筛，零 Token 成本
+  min_text_length: 10      # 文本产物最短字符数（规则快筛阈值）

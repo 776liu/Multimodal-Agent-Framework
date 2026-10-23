@@ -27,22 +27,42 @@ from src.core.contracts import (
 
 # 规则阈值
 MIN_TEXT_LENGTH = 10          # 文本产物最短字符数
-REVIEW_PROMPT_TEMPLATE = """你是一名严格的质量审查员。请审查以下 AI 生成内容，指出其中的问题。
+
+# 分级阈值默认值（可被 config/app.yaml 的 reviewer 段覆盖，工单 T-04）
+DEFAULT_PASS_THRESHOLD = 4    # >= 4 直接通过
+DEFAULT_WARN_THRESHOLD = 3    # 3~4 通过但记 warning；< 3 打回
+
+REVIEW_PROMPT_TEMPLATE = """你是一名质量审查员。请审查以下 AI 生成内容，判断它能否直接交付给用户。
 
 ## 审查维度
-1. 事实准确性：是否存在明显的事实错误或虚构信息
-2. 逻辑连贯：前后是否自洽，有无矛盾
-3. 内容完整：是否切题，是否达到用户要求
-4. 表达质量：是否存在明显的语病、冗余或格式问题
+1. 事实准确性：是否存在**明确的事实错误**或杜撰信息
+2. 逻辑连贯：前后是否自相矛盾
+3. 内容完整：是否切题，是否满足用户要求
+4. 表达质量：是否存在明显语病或格式崩坏
+
+## 判定原则（重要）
+- **只针对实质性缺陷打回**。以下情况一律视为通过，不要因此扣分或打回：
+  - 表述通俗、口语化，或不够学术严谨；
+  - 内容正确但不全面、未展开细节；
+  - 使用了"约""之一""大多数"等合理限定词；
+  - 部分数据略有出入但在常识容许范围内（如海拔写约8848米）。
+- **不要凭空追加要求**：只能基于文本自身内容判断，不得引入文本未主张的观点去反驳。
+- 只有出现**确凿的事实错误、自相矛盾、答非所问、内容崩坏**时才判为不通过。
 
 ## 待审查内容
 {content}
 
 ## 输出格式（严格 JSON，不要输出其他内容）
-{{"score": 0到5的整数, "issues": ["问题1", "问题2"], "pass": true或false}}
+{{"score": 0到5的整数, "issues": ["问题1", "问题2"]}}
 
-评分标准：5=优秀可直接交付，3=可用但有小瑕疵，1=存在严重问题。
-score 低于 3 或 pass 为 false 时，必须在 issues 中说明具体问题。"""
+## 评分标准
+5 = 事实正确、表达通顺，可直接交付
+4 = 有细微可改进处，但不影响使用
+3 = 存在小瑕疵，仍可交付（如表述略笼统）
+2 = 存在明显问题，不建议直接交付
+1 = 存在严重事实错误或内容崩坏
+
+注意：issues 只在确实发现问题时填写；无问题时给空数组。"""
 
 
 class ReviewerAgent(BaseAgent):
@@ -52,11 +72,15 @@ class ReviewerAgent(BaseAgent):
 
     def __init__(self, router, llm_client, name: str = "reviewer_agent",
                  min_text_length: int = MIN_TEXT_LENGTH,
-                 enable_llm_review: bool = True):
+                 enable_llm_review: bool = True,
+                 pass_threshold: int = DEFAULT_PASS_THRESHOLD,
+                 warn_threshold: int = DEFAULT_WARN_THRESHOLD):
         super().__init__(name=name, router=router, llm_client=llm_client,
                          capability="text-generation")
         self.min_text_length = min_text_length
         self.enable_llm_review = enable_llm_review
+        self.pass_threshold = pass_threshold
+        self.warn_threshold = warn_threshold
 
     def _run(self, message: AgentMessage, context: TaskContext,
              model_info: dict) -> AgentResponse:
@@ -106,21 +130,35 @@ class ReviewerAgent(BaseAgent):
 
         verdict = self._parse_verdict(resp.data.content or "")
         if verdict is None:
-            # 审查模型输出不可解析，保守放行
+            # 审查模型输出不可解析，保守放行（避免因审查器故障误伤产物）
             return AgentResponse.success(
                 self.name, artifacts=artifacts,
                 output_text="审查结果解析失败，降级放行",
             )
 
-        score, issues, passed = verdict
-        if not passed:
-            issues.append(f"审查评分 {score}/5，低于交付标准")
-            return AgentResponse.need_revision(self.name, issues)
+        score, issues = verdict
 
-        return AgentResponse.success(
-            self.name, artifacts=artifacts,
-            output_text=f"审查通过，评分 {score}/5",
-        )
+        # 三级分级（工单 T-04）：判定**只依据评分**，不采信模型自报的 pass 字段。
+        # 原因：模型几乎总会返回 pass，若优先采信它，本项目定义的阈值将完全失效，
+        # 严格度既不可配置也不可预测；而评分在实测中对同一文本存在非确定性波动，
+        # 因此需要一个明确、可调、可回归验证的阈值边界。
+        if score >= self.pass_threshold:
+            return AgentResponse.success(
+                self.name, artifacts=artifacts,
+                output_text=f"审查通过，评分 {score}/5",
+            )
+
+        if score >= self.warn_threshold:
+            # 可用但有瑕疵：放行交付，仅记录警告，不触发反思重试（省 Token）
+            warn = list(issues) or ["存在轻微瑕疵"]
+            return AgentResponse.success(
+                self.name, artifacts=artifacts,
+                output_text=f"审查通过（已记录警告），评分 {score}/5："
+                            f"{'；'.join(warn[:3])}",
+            )
+
+        issues.append(f"审查评分 {score}/5，低于交付标准（阈值 {self.warn_threshold}）")
+        return AgentResponse.need_revision(self.name, issues)
 
     # ------------------------------------------------------------------
     # 规则快筛
@@ -160,7 +198,9 @@ class ReviewerAgent(BaseAgent):
     @staticmethod
     def _parse_verdict(raw: str):
         """解析审查模型返回的 JSON，容错 Markdown 代码块包裹。
-        返回 (score, issues, passed) 或 None（解析失败）
+
+        返回 (score, issues) 或 None（解析失败）。
+        不再返回模型自报的 pass 字段——严格度由本项目阈值决定（工单 T-04）。
         """
         import json
 
@@ -182,13 +222,19 @@ class ReviewerAgent(BaseAgent):
         except (json.JSONDecodeError, ValueError):
             return None
 
+        if not isinstance(data, dict) or "score" not in data:
+            return None
+
         try:
-            score = float(data.get("score", 0))
+            score = int(float(data["score"]))
         except (TypeError, ValueError):
-            score = 0.0
+            return None
+
+        # 评分越界视为解析异常，交由调用方保守放行
+        if not 0 <= score <= 5:
+            return None
 
         issues = data.get("issues") or []
         if isinstance(issues, str):
             issues = [issues]
-        passed = bool(data.get("pass", score >= 3))
-        return int(score), list(issues), passed
+        return score, [str(i) for i in issues]

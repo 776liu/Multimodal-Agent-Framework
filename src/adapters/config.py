@@ -56,3 +56,34 @@ def load_app_config(config_path: str = None) -> dict:
         "video_poll_budget": app.get("video_poll_budget", 600),
         "video_poll_interval": app.get("video_poll_interval", 6),
     }
+
+
+def load_reviewer_config(config_path: str = None) -> dict:
+    """加载 Reviewer 严格度配置（工单 T-04）
+
+    独立成函数便于论文实验做参数对比：只改 yaml、重启服务即可切换严格度，
+    无需改代码。三级分级的阈值语义见 ReviewerAgent 类文档。
+    """
+    if config_path is None:
+        config_path = Path(__file__).parent.parent.parent / "config" / "app.yaml"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        example_path = Path(__file__).parent.parent.parent / "config" / "app.example.yaml"
+        if example_path.exists():
+            with open(example_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        else:
+            config = {}
+    reviewer = (config or {}).get("reviewer", {}) or {}
+    return {
+        # >= 该分值：通过，不记警告
+        "pass_threshold": int(reviewer.get("pass_threshold", 4)),
+        # >= 该分值但 < pass_threshold：通过但记 warning（可交付，不触发重试）
+        "warn_threshold": int(reviewer.get("warn_threshold", 3)),
+        # 是否启用 LLM 深度评估（关闭后仅规则快筛，零 Token 成本）
+        "enable_llm_review": bool(reviewer.get("enable_llm_review", True)),
+        # 文本产物最短字符数（规则快筛）
+        "min_text_length": int(reviewer.get("min_text_length", 10)),
+    }

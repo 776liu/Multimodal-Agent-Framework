@@ -11,6 +11,7 @@ from src.core.registry import AgentRegistry
 from src.core.message_bus import MessageBus
 from src.core.orchestrator import Orchestrator
 from src.core.agents import WriterAgent, ImageAgent, VideoAgent, ReviewerAgent
+from src.adapters.config import load_reviewer_config
 
 
 def create_agent(db_path: str = "data/agent.db", multi_agent: bool = True,
@@ -36,11 +37,17 @@ def create_agent(db_path: str = "data/agent.db", multi_agent: bool = True,
 
     # ---- 多 Agent 装配 ----
     registry = AgentRegistry()
+    # Reviewer 严格度由配置驱动（工单 T-04），只改 yaml 即可调松调紧
+    reviewer_cfg = load_reviewer_config()
     registry.register_all([
         WriterAgent(router, llm_client),
         ImageAgent(router, llm_client),
         VideoAgent(router, llm_client),
-        ReviewerAgent(router, llm_client),
+        ReviewerAgent(router, llm_client,
+                      min_text_length=reviewer_cfg["min_text_length"],
+                      enable_llm_review=reviewer_cfg["enable_llm_review"],
+                      pass_threshold=reviewer_cfg["pass_threshold"],
+                      warn_threshold=reviewer_cfg["warn_threshold"]),
     ])
 
     bus = MessageBus(storage=storage)
