@@ -135,11 +135,15 @@ class Orchestrator:
                 session_id=session_id,
                 # 注入上游产物（含文本），解决步骤间数据传递
                 artifacts=context.upstream_of(subtask.step),
+                # 依赖关系透传（工单 T-12）：从计划带出，供落库与前端绘制依赖连线。
+                # 此前该字段止步于 Subtask，执行期即丢失，前端看不到"谁喂了谁"。
+                reference_step=subtask.reference_step,
             )
 
             _emit({
                 "stage": "dispatching", "step": i + 1, "total": total,
                 "agent": agent_name, "capability": subtask.capability,
+                "reference_step": subtask.reference_step,
             })
 
             # 生成 + 步骤内审查 + 反思重试（升级计划 4.6 闭环）

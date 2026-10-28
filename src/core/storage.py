@@ -77,6 +77,8 @@ class Storage:
                     artifacts TEXT,
                     status TEXT,
                     issues TEXT,
+                    role TEXT,
+                    reference_step INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -84,9 +86,15 @@ class Storage:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_session ON task_logs(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_task_audits_task ON task_audits(task_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id)")
 
+        # 先补列再建依赖新列的索引：
+        # idx_agent_messages_session 依赖 session_id，而该列在早期版本中不存在。
+        # 若在建索引之前不补列，老库升级会直接抛 "no such column: session_id"
+        # 而无法启动（此前存在的顺序缺陷，随 T-12 加列一并修正）。
         self._check_columns()
+
+        with self._get_conn() as conn:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id)")
 
     def _check_columns(self):
         """补齐旧表缺失列：先查目录再 ALTER，避免吞掉非预期的数据库错误"""
@@ -101,12 +109,16 @@ class Storage:
                     conn.execute(f"ALTER TABLE task_logs ADD COLUMN {col} TEXT")
 
         # 平滑升级：老库若已存在 agent_messages 但缺列，补齐
+        # role（T-13）：执行方 Agent 名，避免前端按 message_type 反推
+        # reference_step（T-12）：依赖的上游步骤号，供前端绘制产物依赖连线
         with self._get_conn() as conn:
             am_cols = {
                 row["name"] for row in
                 conn.execute("PRAGMA table_info(agent_messages)").fetchall()
             }
-        for col, coltype in (("session_id", "TEXT"), ("status", "TEXT"), ("issues", "TEXT")):
+        for col, coltype in (("session_id", "TEXT"), ("status", "TEXT"),
+                             ("issues", "TEXT"), ("role", "TEXT"),
+                             ("reference_step", "INTEGER")):
             if am_cols and col not in am_cols:
                 with self._get_conn() as conn:
                     conn.execute(f"ALTER TABLE agent_messages ADD COLUMN {col} {coltype}")
@@ -429,15 +441,25 @@ class Storage:
         artifacts: Optional[List[dict]] = None,
         status: Optional[str] = None,
         issues: Optional[List[str]] = None,
+        role: Optional[str] = None,
+        reference_step: Optional[int] = None,
     ) -> None:
-        """保存一条 Agent 间消息。写入失败不阻断主流程（与既有风格一致）"""
+        """保存一条 Agent 间消息。写入失败不阻断主流程（与既有风格一致）
+
+        role（T-13）：本消息的**执行方** Agent 名。派发消息的执行方是 to_agent，
+        回收消息的执行方是 from_agent。落库时写明，前端直接读取，
+        不必再按 message_type 反推（消除前后端各维护一份推导逻辑的隐患）。
+
+        reference_step（T-12）：本步骤依赖的上游步骤号，用于还原产物依赖链。
+        """
         try:
             with self._get_conn() as conn:
                 conn.execute(
                     "INSERT INTO agent_messages "
                     "(task_id, session_id, from_agent, to_agent, step, "
-                    " message_type, content, artifacts, status, issues) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " message_type, content, artifacts, status, issues, "
+                    " role, reference_step) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         task_id,
                         session_id,
@@ -449,6 +471,8 @@ class Storage:
                         json.dumps(artifacts or [], ensure_ascii=False),
                         status,
                         json.dumps(issues, ensure_ascii=False) if issues else None,
+                        role,
+                        reference_step,
                     ),
                 )
         except Exception:
@@ -474,6 +498,10 @@ class Storage:
                     "artifacts": json.loads(r["artifacts"] or "[]"),
                     "status": r["status"],
                     "issues": json.loads(r["issues"]) if r["issues"] else None,
+                    # role（T-13）与 reference_step（T-12）：老库经 _check_columns 补列后均可读
+                    "role": r["role"] if "role" in r.keys() else None,
+                    "reference_step": (r["reference_step"]
+                                       if "reference_step" in r.keys() else None),
                     "created_at": r["created_at"],
                 }
                 for r in rows

@@ -125,20 +125,33 @@ async def get_task_agents(task_id: str, request: Request):
     for m in messages:
         step = m.get("step", 0)
         if step not in trace:
-            trace[step] = {"step": step, "entries": []}
+            trace[step] = {"step": step, "entries": [], "reference_step": None}
             order.append(step)
         entry = {
             "from_agent": m["from_agent"],
             "to_agent": m["to_agent"],
             "message_type": m["message_type"],
+            # 执行方角色（T-13）：落库时已写明，前端直接读取，不再按 message_type 反推
+            "role": m.get("role") or (
+                m["from_agent"] if m["message_type"] == "result" else m["to_agent"]
+            ),
             "status": m.get("status"),
             "content": (m.get("content") or "")[:200],
             "artifacts": [
-                {"type": a.get("type"), "url": a.get("content", "")[:120]}
+                {
+                    "type": a.get("type"),
+                    "url": a.get("content", "")[:120],
+                    # metadata 携带 step/model/prompt 等，供前端画依赖连线时标注产物（T-12）
+                    "metadata": a.get("metadata") or {},
+                }
                 for a in (m.get("artifacts") or [])
             ],
+            # 依赖的上游步骤号（T-12）：前端据此绘制产物依赖边
+            "reference_step": m.get("reference_step"),
             "created_at": m.get("created_at"),
         }
+        if entry["reference_step"] is not None:
+            trace[step]["reference_step"] = entry["reference_step"]
         trace[step]["entries"].append(entry)
 
     # 汇总参与过的 Agent 角色

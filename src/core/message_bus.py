@@ -91,6 +91,7 @@ class MessageBus:
             "to": message.receiver,
             "prompt": message.prompt,
             "capability": message.capability,
+            "reference_step": message.reference_step,
             "input_artifacts": [a.to_dict() for a in message.artifacts],
             "status": response.status if response else "DISPATCHED",
             "output_artifacts": [a.to_dict() for a in response.artifacts] if response else [],
@@ -103,7 +104,7 @@ class MessageBus:
             return
 
         if response is None:
-            # 派发记录
+            # 派发记录：执行方 = 收件 Agent
             self.storage.save_agent_message(
                 task_id=message.task_id,
                 session_id=message.session_id,
@@ -113,9 +114,11 @@ class MessageBus:
                 message_type="dispatch",
                 content=message.prompt,
                 artifacts=entry["input_artifacts"],
+                role=message.receiver,
+                reference_step=message.reference_step,
             )
         elif response.ok:
-            # 成功回收
+            # 成功回收：执行方 = 发件 Agent
             self.storage.save_agent_message(
                 task_id=message.task_id,
                 session_id=message.session_id,
@@ -126,6 +129,8 @@ class MessageBus:
                 content=response.output_text[:2000],
                 artifacts=entry["output_artifacts"],
                 status=STATUS_SUCCESS,
+                role=message.receiver,
+                reference_step=message.reference_step,
             )
         else:
             # 失败/打回
@@ -140,6 +145,8 @@ class MessageBus:
                 artifacts=entry["output_artifacts"],
                 status=response.status,
                 issues=response.issues,
+                role=message.receiver,
+                reference_step=message.reference_step,
             )
 
     def drain_trace(self) -> List[dict]:

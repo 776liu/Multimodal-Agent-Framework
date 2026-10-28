@@ -1,7 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useTaskStore } from '../../stores/taskStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import type { CallChainEntry } from '../../types';
+import type { AgentTraceResponse, CallChainEntry } from '../../types';
+import { getTaskAgents } from '../../api/task';
+import { CollabTopology } from './CollabTopology';
+import { CollabConversation } from './CollabConversation';
 import {
   Activity,
   CheckCircle2,
@@ -35,6 +38,7 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
   const currentTask = useTaskStore((state) => state.currentTask);
   const isExecuting = useTaskStore((state) => state.isExecuting);
   const sessionTasks = useSessionStore((state) => state.sessionTasks);
+  const progressEvents = useTaskStore((state) => state.progressEvents);
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false);
   // null = 展示实时任务; 数字 = 展示历史任务列表中的第 n 个
   const [selectedHistoryIdx, setSelectedHistoryIdx] = useState<number | null>(null);
@@ -73,6 +77,40 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
 
   const status = view?.status || (isExecuting ? 'processing' : 'IDLE');
   const failedCount = view?.callChain.filter((c) => c.status !== 'SUCCESS').length ?? 0;
+
+  /**
+   * 调度轨迹（T-12 / T-13）
+   *
+   * 组件自持一份 trace，按当前视图的 taskId 拉取：
+   * - 不用 store 里的全局 agentTrace，避免与聊天区的"最新一轮"互相覆盖；
+   * - 历史任务切换时同样能回放依赖与对话（数据来自 agent_messages 持久化）。
+   */
+  const [activeTrace, setActiveTrace] = useState<AgentTraceResponse | null>(null);
+  const viewTaskId = view?.taskId ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!viewTaskId) {
+      setActiveTrace(null);
+      return;
+    }
+    // 已有同任务轨迹时不重复请求
+    if (activeTrace?.task_id === viewTaskId) return;
+
+    getTaskAgents(viewTaskId)
+      .then((trace) => {
+        if (!cancelled) setActiveTrace(trace);
+      })
+      .catch(() => {
+        if (!cancelled) setActiveTrace(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // activeTrace 故意不列入依赖，避免拉取成功后再次触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewTaskId]);
 
   /**
    * 按 Agent 角色分组调用链（工单 T-02）
@@ -131,8 +169,15 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
             <XCircle className="w-3 h-3" /> 执行失败
           </span>
         );
-      case 'processing':
       case 'pending':
+        // 排队中（T-14）：任务已入队但 Worker 尚未领取。
+        // 与"执行中"区分，让"双车道排队"这件事在界面上可见。
+        return (
+          <span className="inline-flex items-center gap-1 text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-300/80">
+            <Clock className="w-3 h-3" /> 排队中
+          </span>
+        );
+      case 'processing':
         return (
           <span className="inline-flex items-center gap-1 text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full text-[11px] font-semibold border border-indigo-200/80 animate-pulse">
             <Clock className="w-3 h-3 animate-spin" /> 执行中
@@ -148,7 +193,35 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
     }
   };
 
+  /**
+   * 管道阶段点亮（T-14）
+   *
+   * 此前按任务状态静态推断（processing 就恒定点亮前两段），等于没反映真实进度。
+   * 现改为按 `/progress` 的真实事件推进：planning → planned → dispatching →
+   * collecting → auditing，缺事件时才回退到静态推断（历史任务无事件流时仍可用）。
+   */
+  const liveStage = useMemo(() => {
+    const stages = progressEvents.map((e) => e.stage).filter(Boolean);
+    if (!stages.length) return null;
+    const last = stages[stages.length - 1];
+    const seen = new Set(stages);
+    // 返回 [已完成到第几段, 当前进行到第几段]
+    const reached = (name: string) => seen.has(name);
+    if (reached('auditing')) return { done: 3, active: 4 };
+    if (reached('dispatching') || reached('collecting')) return { done: 2, active: 3 };
+    if (reached('planned')) return { done: 1, active: 2 };
+    if (last === 'planning') return { done: 0, active: 1 };
+    return null;
+  }, [progressEvents]);
+
   const getPipelineStepStatus = (stepIndex: number) => {
+    // 任务已终态：统一按终态着色，不再看中间事件
+    if (status === 'SUCCESS' && stepIndex <= 4) return 'done';
+    if (liveStage) {
+      if (stepIndex <= liveStage.done) return 'done';
+      if (stepIndex === liveStage.active) return 'active';
+      return 'pending';
+    }
     if (status === 'processing' || status === 'pending') {
       return stepIndex <= 2 ? 'active' : 'pending';
     }
@@ -269,7 +342,7 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
             </span>
             <span className="text-[10px] font-mono text-slate-400">
               {isExecuting && selectedHistoryIdx === null
-                ? '运行阶段 2/4'
+                ? `运行阶段 ${liveStage?.active ?? 1}/4`
                 : status === 'SUCCESS'
                 ? '已完成 4/4'
                 : status === 'PARTIAL_SUCCESS'
@@ -437,6 +510,16 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
               ))}
             </div>
           )}
+        </div>
+
+        {/* 协作拓扑（T-12）：产物在步骤间流动的依赖视图 */}
+        <div className="pt-2 border-t border-slate-100">
+          <CollabTopology steps={activeTrace?.steps} />
+        </div>
+
+        {/* 协作对话（T-13）：把派发/回收还原为一次往返对话 */}
+        <div className="pt-2 border-t border-slate-100">
+          <CollabConversation steps={activeTrace?.steps} />
         </div>
 
         {/* Quality Audit Section */}

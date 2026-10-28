@@ -89,6 +89,12 @@ class AgentMessage:
 
     artifacts 携带上游步骤的产物，下游 Agent 据此做多模态输入
     （例如 Image Agent 产出的图片，注入 Writer Agent 的视觉输入）。
+
+    reference_step（工单 T-12）：
+        本步骤依赖的上游步骤号。0 = 引用对话历史中的产物，None = 无依赖。
+        该字段此前只存在于 Subtask（执行计划）中，执行期即丢失，
+        导致前端无法还原"哪个产物喂给了哪个步骤"的依赖链。
+        现由 Orchestrator 派发时透传，由 MessageBus 落库供前端可视化。
     """
     task_id: str
     step: int
@@ -98,6 +104,7 @@ class AgentMessage:
     capability: str = ""        # 该步骤要求的能力标签
     session_id: str = "default" # 归属会话，用于 agent_messages 落库
     artifacts: List[Artifact] = field(default_factory=list)
+    reference_step: Optional[int] = None   # 依赖的上游步骤号（T-12）
 
     def to_dict(self) -> dict:
         return {
@@ -109,10 +116,12 @@ class AgentMessage:
             "capability": self.capability,
             "session_id": self.session_id,
             "artifacts": [a.to_dict() for a in self.artifacts],
+            "reference_step": self.reference_step,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "AgentMessage":
+        ref = data.get("reference_step")
         return cls(
             task_id=data["task_id"],
             step=data.get("step", 0),
@@ -122,6 +131,7 @@ class AgentMessage:
             capability=data.get("capability", ""),
             session_id=data.get("session_id", "default"),
             artifacts=[Artifact.from_dict(a) for a in data.get("artifacts") or []],
+            reference_step=(int(ref) if ref is not None else None),
         )
 
     def artifacts_of_type(self, artifact_type: str) -> List[Artifact]:

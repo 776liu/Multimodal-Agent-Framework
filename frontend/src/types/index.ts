@@ -47,15 +47,26 @@ export interface AgentTraceEntry {
   from_agent: string;
   to_agent: string;
   message_type: 'dispatch' | 'result' | string;
+  /** 执行方角色（T-13）：后端落库时写入，前端直接读取，不再按 message_type 反推 */
+  role?: string | null;
   status?: string | null;
   content?: string;
-  artifacts?: Array<{ type: string; url: string }>;
+  artifacts?: Array<{
+    type: string;
+    url: string;
+    /** 携带 step / model / prompt 等，用于依赖连线时标注产物（T-12） */
+    metadata?: Record<string, unknown>;
+  }>;
+  /** 依赖的上游步骤号（T-12）：0 = 引用对话历史产物，null/undefined = 无依赖 */
+  reference_step?: number | null;
   created_at?: string;
 }
 
 export interface AgentTraceStep {
   step: number;
   entries: AgentTraceEntry[];
+  /** 该步骤依赖的上游步骤号（T-12），由后端汇总 */
+  reference_step?: number | null;
 }
 
 export interface AgentTraceResponse {

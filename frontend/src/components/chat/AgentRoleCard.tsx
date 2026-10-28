@@ -62,8 +62,11 @@ export const AgentRoleCard: React.FC<AgentRoleCardProps> = ({
     const byRole = new Map<string, Node[]>();
     trace.steps.forEach((s) => {
       s.entries.forEach((e) => {
-        // 结果消息归到执行方角色名下
-        const role = e.message_type === 'result' ? e.from_agent : e.to_agent;
+        // 执行方角色直接读后端写入的 role 字段（T-13）。
+        // 此前按 message_type 反推，等于前后端各维护一份推导逻辑，
+        // 任一端调整即静默不一致；现由 MessageBus 落库时写明执行方。
+        const role =
+          e.role || (e.message_type === 'result' ? e.from_agent : e.to_agent);
         const list = byRole.get(role) || [];
         list.push({
           type: e.message_type === 'result' ? 'result' : 'dispatch',
