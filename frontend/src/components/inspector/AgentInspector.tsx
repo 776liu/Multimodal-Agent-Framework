@@ -94,23 +94,30 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
       setActiveTrace(null);
       return;
     }
-    // 已有同任务轨迹时不重复请求
-    if (activeTrace?.task_id === viewTaskId) return;
 
-    getTaskAgents(viewTaskId)
-      .then((trace) => {
-        if (!cancelled) setActiveTrace(trace);
-      })
-      .catch(() => {
-        if (!cancelled) setActiveTrace(null);
-      });
+    const fetchTrace = () => {
+      getTaskAgents(viewTaskId)
+        .then((trace) => {
+          if (!cancelled) setActiveTrace(trace);
+        })
+        .catch(() => {
+          // 拉取失败保留上一次结果，避免执行中闪烁成空
+        });
+    };
+
+    // 进入视图先取一次
+    fetchTrace();
+
+    // 运行中：随轮询同步刷新，让协作拓扑 / 协作对话像调用链路一样"逐条跳出"。
+    // 数据源 agent_messages 本身是实时写入的，此前只是前端只取了一次。
+    // 注意：activeTrace 与 progressEvents 均不列入依赖，避免拉取成功后自触发死循环。
+    const timer = isExecuting ? window.setInterval(fetchTrace, 1200) : undefined;
 
     return () => {
       cancelled = true;
+      if (timer !== undefined) window.clearInterval(timer);
     };
-    // activeTrace 故意不列入依赖，避免拉取成功后再次触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewTaskId]);
+  }, [viewTaskId, isExecuting]);
 
   /**
    * 按 Agent 角色分组调用链（工单 T-02）

@@ -157,7 +157,9 @@ export const CollabTopology: React.FC<{ steps?: AgentTraceStep[] }> = ({ steps }
                       })}
                       {node.artifacts.length === 0 && (
                         <span className="text-[9px] text-slate-400">
-                          无新产物{node.role.includes('review') ? ' · 审计透传' : ''}
+                          {node.status === 'DISPATCHED' || node.status === 'UNKNOWN'
+                            ? '执行中…'
+                            : `无新产物${node.role.includes('review') ? ' · 审计透传' : ''}`}
                         </span>
                       )}
                     </div>
