@@ -115,8 +115,13 @@ async def get_task_agents(task_id: str, request: Request):
     """
     task_manager = request.app.state.task_manager
     storage = request.app.state.storage
-    # agent_messages 记录的是引擎内部task_id，需经映射转换
+    # agent_messages 按引擎内部 task_id 存储，需两层解析：
+    # 1) Redis 映射（执行期实时写入，快）；
+    # 2) 回退 task_logs.internal_task_id（SQLite 持久化，权威）。
+    #    此前只走 Redis，映射过期/被清空后历史任务的协作视图会永久为空。
     internal_id = task_manager.resolve_internal_task_id(task_id)
+    if not internal_id or internal_id == task_id:
+        internal_id = storage.resolve_internal_task_id(task_id) or task_id
     messages = storage.get_agent_messages(internal_id)
 
     # 按 step 分组还原调度轨迹

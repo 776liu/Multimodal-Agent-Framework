@@ -49,6 +49,7 @@ class Storage:
                     log_json TEXT,
                     results_json TEXT,
                     call_chain_json TEXT,
+                    internal_task_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -103,10 +104,22 @@ class Storage:
                 row["name"] for row in
                 conn.execute("PRAGMA table_info(task_logs)").fetchall()
             }
-        for col in ("results_json", "call_chain_json", "user_input"):
+        for col in ("results_json", "call_chain_json", "user_input", "internal_task_id"):
             if col not in existing:
                 with self._get_conn() as conn:
                     conn.execute(f"ALTER TABLE task_logs ADD COLUMN {col} TEXT")
+
+        # 回填 internal_task_id：历史库中该字段只藏在 log_json 里。
+        # 该映射此前只存在于 Redis（TTL 1 小时），过期后历史任务的 Agent 协作
+        # 视图（agent_messages）将永久无法关联——这正是"关掉再打开就看不到"的根因。
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE task_logs SET internal_task_id = "
+                "json_extract(log_json, '$.task_id') "
+                "WHERE internal_task_id IS NULL "
+                "AND json_valid(log_json) "
+                "AND json_extract(log_json, '$.task_id') IS NOT NULL"
+            )
 
         # 平滑升级：老库若已存在 agent_messages 但缺列，补齐
         # role（T-13）：执行方 Agent 名，避免前端按 message_type 反推
@@ -226,8 +239,9 @@ class Storage:
             with self._get_conn() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO task_logs "
-                    "(task_id, session_id, task_status, frontend_json, log_json, results_json, call_chain_json, user_input) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(task_id, session_id, task_status, frontend_json, log_json, "
+                    " results_json, call_chain_json, user_input, internal_task_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         task_id,
                         session_id,
@@ -237,6 +251,9 @@ class Storage:
                         json.dumps(self._serialize_results(results or []), ensure_ascii=False),
                         json.dumps(self._serialize_call_chain(call_chain or []), ensure_ascii=False),
                         user_input,
+                        # 引擎内部 task_id（agent_messages 的归属键）。
+                        # 持久化后，即使 Redis 映射过期也能关联多 Agent 轨迹。
+                        (log or {}).get("task_id"),
                     ),
                 )
         except Exception:
@@ -477,6 +494,27 @@ class Storage:
                 )
         except Exception:
             pass  # 审计类写入静默失败，不影响任务执行
+
+    def resolve_internal_task_id(self, external_task_id: str) -> Optional[str]:
+        """由外部（队列）任务 ID 解析引擎内部 task_id。
+
+        持久化来源：task_logs.internal_task_id。
+        设计动机：该映射原先只写在 Redis（TTL 1 小时），过期或 Redis 被清空后，
+        历史任务的 Agent 协作轨迹（agent_messages 按内部 ID 存储）将无法关联，
+        表现为"任务的协作拓扑/对话流打开后是空的"。
+        现以 SQLite 为权威来源，Redis 仅作快速路径。
+        """
+        try:
+            with self._get_conn() as conn:
+                row = conn.execute(
+                    "SELECT internal_task_id FROM task_logs WHERE task_id = ?",
+                    (external_task_id,),
+                ).fetchone()
+            if row and row["internal_task_id"]:
+                return row["internal_task_id"]
+        except Exception:
+            pass
+        return None
 
     def get_agent_messages(self, task_id: str, limit: int = 100) -> List[dict]:
         """按步骤顺序取某任务的全部 Agent 消息"""

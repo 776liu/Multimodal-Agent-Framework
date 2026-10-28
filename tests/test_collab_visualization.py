@@ -181,6 +181,87 @@ def test_old_db_gets_new_columns():
         assert rows[0]["reference_step"] is None
 
 
+# ----------------------------------------------------------------------
+# 外部 ID → 内部 ID 映射持久化（协作视图长期可用）
+# ----------------------------------------------------------------------
+def test_internal_task_id_persisted_in_task_logs():
+    """save_task_log 应把 log 里的内部 task_id 落进 internal_task_id 列"""
+    with tempfile.TemporaryDirectory() as d:
+        storage = Storage(db_path=os.path.join(d, "map.db"))
+        storage.save_task_log(
+            task_id="ext-1", session_id="s1",
+            frontend={"task_id": "ext-1", "data": {}},
+            log={"task_id": "task_internal_1", "task_status": "SUCCESS",
+                 "call_chain": []},
+        )
+        assert storage.resolve_internal_task_id("ext-1") == "task_internal_1"
+
+
+def test_resolve_returns_none_for_unknown():
+    with tempfile.TemporaryDirectory() as d:
+        storage = Storage(db_path=os.path.join(d, "map2.db"))
+        assert storage.resolve_internal_task_id("nope") is None
+
+
+def test_old_task_logs_backfilled_on_upgrade():
+    """老库无 internal_task_id 列时，初始化应从 log_json 回填。
+
+    这是"Redis 映射过期后历史任务协作视图全空"的修复核心：
+    映射的权威来源改为 SQLite，并对存量数据一次性回填。
+    """
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        db = os.path.join(d, "oldlogs.db")
+        conn = sqlite3.connect(db)
+        conn.execute("""
+            CREATE TABLE task_logs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL UNIQUE,
+                session_id TEXT DEFAULT 'default',
+                task_status TEXT NOT NULL,
+                frontend_json TEXT,
+                log_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        log = json.dumps({"task_id": "task_old_internal", "task_status": "SUCCESS"})
+        conn.execute(
+            "INSERT INTO task_logs(task_id, session_id, task_status, log_json) "
+            "VALUES ('ext-old', 's1', 'SUCCESS', ?)", (log,))
+        conn.commit()
+        conn.close()
+
+        storage = Storage(db_path=db)   # 触发补列 + 回填
+
+        assert storage.resolve_internal_task_id("ext-old") == "task_old_internal"
+
+
+def test_agents_fallback_uses_sqlite_when_redis_miss():
+    """Redis 映射失效时，/agents 的解析链应回退到 SQLite。
+
+    直接验证解析逻辑：给一个 Redis 查不到的外部 ID，
+    只要 task_logs 里有映射，就应解析出内部 ID 并查到 agent_messages。
+    """
+    with tempfile.TemporaryDirectory() as d:
+        storage, bus = _make(d)
+        bus.register(_EchoAgent())
+        ctx = TaskContext(task_id="task_inner_9", session_id="s1", user_input="")
+
+        bus.dispatch(AgentMessage(task_id="task_inner_9", step=1,
+                                  sender="orchestrator", receiver="echo_agent",
+                                  prompt="干活", session_id="s1"), ctx)
+        storage.save_task_log(
+            task_id="ext-9", session_id="s1",
+            frontend={"task_id": "ext-9"},
+            log={"task_id": "task_inner_9", "task_status": "SUCCESS", "call_chain": []},
+        )
+
+        resolved = storage.resolve_internal_task_id("ext-9")
+        assert resolved == "task_inner_9"
+        # 用解析出的内部 ID 能查到协作轨迹
+        assert len(storage.get_agent_messages(resolved)) == 2
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
