@@ -23,6 +23,17 @@ export interface CallChainEntry {
   elapsed_ms?: number;
 }
 
+/** 单次模型调用明细（T-15）：随 collecting 事件增量下发 */
+export interface ProgressCallDetail {
+  agent: string;
+  model: string;
+  capability: string;
+  status: string;
+  error_code?: number | null;
+  elapsed_ms?: number;
+  attempted_at?: string;
+}
+
 /** 任务进度事件（工单 T-01 /progress 端点） */
 export interface ProgressEvent {
   stage:
@@ -37,6 +48,10 @@ export interface ProgressEvent {
   step?: number;
   total?: number;
   status?: string;
+  /** 内部 task_id（T-15）：仅 planning 事件携带，供早期登记映射 */
+  task_id?: string;
+  /** 本步产生的模型调用明细（T-15）：用于增量渲染调用链路 */
+  calls?: ProgressCallDetail[];
   issues?: string[];
   notice?: string;
   ts?: number;

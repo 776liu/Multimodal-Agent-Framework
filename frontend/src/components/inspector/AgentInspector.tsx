@@ -120,8 +120,45 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
    * 只有"哪个角色调了哪个模型"这一维度，能证明系统是多 Agent 协作。
    * 因此以 agent 为主键分组，模型降级明细作为组内明细展示。
    */
+  /**
+   * 实时调用链（T-15）
+   *
+   * 问题：`call_chain` 只在任务收尾时汇总并写回，执行期间恒为空，
+   * 因此"调用链路"整块要等任务跑完才一次性出现，看不到逐条跳出的过程。
+   *
+   * 方案：Orchestrator 现在把每步产生的调用明细随 `collecting` 事件下发
+   * （`progressEvents[].calls`），这里把它聚合成与终态 `call_chain` 同构的数组。
+   * - 运行中：用实时事件渲染，逐条出现；
+   * - 任务终态：`view.callChain` 非空则直接用它覆盖（同为权威终态数据）。
+   * 去重键用 `agent+model+capability+attempted_at`：反思重试会产生新的
+   * `attempted_at`，因此不会被误判重复；同一事件的重复拉取则会被合并。
+   */
+  const liveChain = useMemo<CallChainEntry[]>(() => {
+    const fromEvents: CallChainEntry[] = [];
+    const seen = new Set<string>();
+    progressEvents.forEach((e) => {
+      (e.calls || []).forEach((c) => {
+        const key = `${c.agent}|${c.model}|${c.capability}|${c.attempted_at || ''}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        fromEvents.push({
+          agent: c.agent,
+          model_name: c.model,
+          capability: c.capability,
+          status: c.status,
+          error_code: c.error_code ?? null,
+          elapsed_ms: c.elapsed_ms ?? 0,
+          attempted_at: c.attempted_at,
+        } as CallChainEntry);
+      });
+    });
+    return fromEvents;
+  }, [progressEvents]);
+
   const groupedByAgent = useMemo(() => {
-    const chain = view?.callChain || [];
+    // 终态数据优先；运行中回退到实时事件聚合结果
+    const finalized = view?.callChain || [];
+    const chain = finalized.length > 0 ? finalized : liveChain;
     const groups = new Map<string, CallChainEntry[]>();
     chain.forEach((entry, idx) => {
       // 老数据无 agent 字段时归入"未标注"组，不伪造角色名
@@ -144,7 +181,7 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
         allOk: failures.length === 0,
       };
     });
-  }, [view]);
+  }, [view, liveChain]);
 
   const getStatusBadge = (s: string) => {
     switch (s) {
@@ -427,7 +464,11 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
               <span>调用链路</span>
             </div>
             <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
-              {groupedByAgent.length} 个角色 · {view?.callChain.length ?? 0} 次调用
+              {groupedByAgent.length} 个角色 ·{' '}
+              {(view?.callChain.length ?? 0) > 0
+                ? view?.callChain.length
+                : liveChain.length}{' '}
+              次调用
               {failedCount > 0 && (
                 <span className="text-rose-500 font-semibold"> · {failedCount} 失败</span>
               )}

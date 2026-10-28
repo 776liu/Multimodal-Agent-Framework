@@ -59,11 +59,25 @@ class Worker:
                 # Orchestrator 发出的 stage/agent 事件全部在进程内蒸发。
                 # 现写入 Redis 进度通道，供前端轮询 /progress 实时展示。
                 def _make_progress(task_id=task_id):
+                    linked = {"done": False}
+
                     def _on_progress(event: dict):
                         try:
                             payload = dict(event)
                             payload.setdefault("ts", time.time())
                             self.task_manager.append_progress(task_id, payload)
+
+                            # 早期登记内部 ID 映射（T-15）：
+                            # Orchestrator 在首个 planning 事件里带出内部 task_id，
+                            # 这里立刻登记，使执行期间 /agents 就能关联到
+                            # agent_messages（该表是实时写入的），
+                            # 而不是等任务结束才登记、执行期间协作视图一直为空。
+                            internal_id = payload.get("task_id")
+                            if internal_id and not linked["done"]:
+                                self.task_manager.link_internal_task_id(
+                                    task_id, internal_id
+                                )
+                                linked["done"] = True
                         except Exception:
                             pass  # 进度记录失败不阻断任务
                     return _on_progress

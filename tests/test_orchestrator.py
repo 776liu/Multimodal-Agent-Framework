@@ -326,3 +326,104 @@ def test_reviewed_step_retry_drops_stale_artifacts():
     up = ctx.upstream_of(3)
     assert all(a.content != "旧版本" for a in up)
     assert any(a.content == "下游产物" for a in up)
+
+
+# ==================================================================
+# T-15：调用链实时化（事件增量下发 + 内部 ID 早期暴露）
+# ==================================================================
+def _run_with_events(subtasks, llm=None, max_retries=1):
+    orch, llm, bus = _build_orchestrator(subtasks, llm=llm, max_retries=max_retries)
+    events = []
+    result = orch.run("测试输入", "s1", on_progress=events.append)
+    return result, events, llm
+
+
+def test_planning_event_carries_internal_task_id():
+    """首个事件带出内部 task_id，供 Worker 立即登记映射（否则执行期间协作视图为空）"""
+    _, events, _ = _run_with_events([
+        {"step": 1, "capability": "text-generation", "prompt": "写点东西"},
+    ])
+    planning = [e for e in events if e.get("stage") == "planning"]
+    assert planning, "应发出 planning 事件"
+    assert planning[0].get("task_id"), "planning 事件必须携带内部 task_id"
+    assert str(planning[0]["task_id"]).startswith("task_")
+
+
+def test_collecting_event_carries_incremental_calls():
+    """collecting 事件携带本步调用明细，前端才能逐条渲染调用链"""
+    _, events, _ = _run_with_events([
+        {"step": 1, "capability": "text-generation", "prompt": "写点东西"},
+    ])
+    collecting = [e for e in events if e.get("stage") == "collecting"]
+    assert collecting, "应发出 collecting 事件"
+    calls = collecting[0].get("calls")
+    assert calls, "collecting 事件应携带 calls 明细"
+    first = calls[0]
+    for field in ("agent", "model", "capability", "status"):
+        assert field in first, f"calls 明细缺少字段 {field}"
+    assert first["agent"] == "writer_agent"
+    assert first["model"] == "text-A"
+
+
+def test_collecting_calls_are_per_step_not_cumulative():
+    """每步只下发"本步新增"的调用，避免前端重复累计"""
+    _, events, _ = _run_with_events([
+        {"step": 1, "capability": "image-generation", "prompt": "画一只猫"},
+        {"step": 2, "capability": "text-generation", "prompt": "描述这张图",
+         "reference_step": 1},
+    ])
+    collecting = [e for e in events if e.get("stage") == "collecting"]
+    assert len(collecting) == 2
+
+    step1_calls = collecting[0].get("calls") or []
+    step2_calls = collecting[1].get("calls") or []
+    # 步骤1只应包含 image_agent（+其审查），不应混入步骤2的 writer
+    assert all(c["agent"] != "writer_agent" for c in step1_calls), \
+        f"步骤1不应包含 writer 调用: {step1_calls}"
+    assert any(c["agent"] == "image_agent" for c in step1_calls)
+
+
+def test_final_call_chain_not_duplicated():
+    """逐步 drain + 收尾兜底 drain 不得重复计入同一次调用"""
+    result, events, _ = _run_with_events([
+        {"step": 1, "capability": "text-generation", "prompt": "写点东西"},
+    ])
+    chain = result["log_record"]["call_chain"]
+    sigs = [(c["agent"], c["model_name"], c["capability"], c["attempted_at"])
+            for c in chain]
+    assert len(sigs) == len(set(sigs)), f"调用链存在重复条目: {sigs}"
+
+    # 事件下发的调用应是终态的子集（整体审计属终态行为，只出现在 call_chain 里）
+    from_events = sum(len(e.get("calls") or []) for e in events
+                      if e.get("stage") == "collecting")
+    assert 0 < from_events <= len(chain), \
+        f"事件下发 {from_events} 条，终态 {len(chain)} 条，应为非空子集"
+
+    # 步骤内审查（Reviewer）也调用了模型，必须实时下发，不能只在终态出现
+    agents_in_events = {
+        c["agent"] for e in events if e.get("stage") == "collecting"
+        for c in (e.get("calls") or [])
+    }
+    assert "writer_agent" in agents_in_events
+    assert "reviewer_agent" in agents_in_events, \
+        f"步骤内审查调用未实时下发: {agents_in_events}"
+
+
+def test_revision_emits_extra_calls():
+    """反思重试时，重做产生的调用应再次下发（不能被去重掉）"""
+    llm = _StubLLM(review_fail_first=True)
+    result, events, _ = _run_with_events([
+        {"step": 1, "capability": "text-generation", "prompt": "写点东西"},
+    ], llm=llm, max_retries=1)
+
+    revision = [e for e in events if e.get("stage") == "revision"]
+    assert revision, "应出现 revision 事件"
+
+    collecting = [e for e in events if e.get("stage") == "collecting"]
+    total_calls = sum(len(e.get("calls") or []) for e in collecting)
+    writer_calls = sum(
+        1 for e in collecting for c in (e.get("calls") or [])
+        if c["agent"] == "writer_agent"
+    )
+    assert writer_calls >= 2, f"重做后应出现两次 writer 调用，实际 {writer_calls}"
+    assert total_calls >= writer_calls

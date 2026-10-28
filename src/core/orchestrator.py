@@ -97,7 +97,10 @@ class Orchestrator:
             self.memory.add(session_id, "user", user_input)
 
         # ---------------- PLANNING ----------------
-        _emit({"stage": "planning"})
+        # 首个事件即带出内部 task_id：Worker 收到后可立刻登记"外部ID→内部ID"映射，
+        # 使协作对话流（agent_messages 实时写入）在执行过程中就能被前端查到。
+        # 此前映射要等 run() 返回后才登记，导致执行期间 /agents 始终为空。
+        _emit({"stage": "planning", "task_id": task_id})
         full_input = user_input
         if self.memory:
             full_input = self.memory.build_context(session_id, user_input)
@@ -147,7 +150,11 @@ class Orchestrator:
             })
 
             # 生成 + 步骤内审查 + 反思重试（升级计划 4.6 闭环）
+            # 每步派发后立即把该步产生的调用链条目汇总进来（T-15），
+            # 使其可随 collecting 事件实时下发给前端；否则调用链只在收尾时一次性出现。
+            chain_cursor = len(call_chain)
             response = self.bus.dispatch(message, context)
+            call_chain.extend(self.bus.drain_call_chains())
             step_rejected = False
             attempts = 0
 
@@ -157,6 +164,9 @@ class Orchestrator:
                     audit = self._audit_step(
                         task_id, session_id, subtask, response.artifacts, context, i, total
                     )
+                    # 步骤内审查本身也会调用模型（Reviewer），同样要增量汇总，
+                    # 否则前端实时链路上会缺掉"审查"这一跳，看起来像凭空多出耗时。
+                    call_chain.extend(self.bus.drain_call_chains())
                     if audit is None or audit.status != STATUS_NEED_REVISION:
                         break
                     step_rejected = True
@@ -174,10 +184,25 @@ class Orchestrator:
                 # 重做本步：清除本步旧产物，避免失败版本混入下游上下文
                 context.step_outputs.pop(subtask.step, None)
                 response = self.bus.dispatch(message, context)
+                call_chain.extend(self.bus.drain_call_chains())
 
             _emit({
                 "stage": "collecting", "step": i + 1, "total": total,
                 "agent": agent_name, "status": response.status,
+                # 本步产生的模型调用明细（T-15）：前端据此增量渲染"调用链路"，
+                # 无需等任务结束后的终态 call_chain。
+                "calls": [
+                    {
+                        "agent": c.agent,
+                        "model": c.model_name,
+                        "capability": c.capability,
+                        "status": c.status,
+                        "error_code": c.error_code,
+                        "elapsed_ms": c.elapsed_ms,
+                        "attempted_at": c.attempted_at,
+                    }
+                    for c in call_chain[chain_cursor:]
+                ],
             })
 
             if not response.ok:
@@ -201,7 +226,8 @@ class Orchestrator:
             and audit_response.status == STATUS_NEED_REVISION
         )
 
-        # 汇总调用链（各 Agent 内部收集的模型调用记录）
+        # 兜底汇总：正常情况下各步已 drain 过，这里通常为空；
+        # 保留以防未来新增路径遗漏（幂等，不会重复计入）。
         call_chain.extend(self.bus.drain_call_chains())
         if audit_response is not None:
             self._append_review_chain(call_chain, audit_response)
