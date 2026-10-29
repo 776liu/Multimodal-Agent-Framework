@@ -50,6 +50,7 @@ class Builder:
                     # 多 Agent 可观测性字段（工单 T-01）
                     "agent" : c.agent,
                     "elapsed_ms" : c.elapsed_ms,
+                    "step" : c.step,
                 }
                 for c in input.call_chain
             ],

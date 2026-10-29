@@ -99,7 +99,7 @@ class BaseAgent(ABC):
 
             if response.ok:
                 if self.model_invoked:
-                    self._record_chain(model_info, capability, "SUCCESS")
+                    self._record_chain(model_info, capability, "SUCCESS", step=message.step)
                 return response
 
             # NEED_REVISION 是终态而非模型故障：内容质量不达标，
@@ -109,12 +109,13 @@ class BaseAgent(ABC):
             # 未发生模型调用，不得写入虚假链路记录（与 SUCCESS/FAILED 一致）。
             if response.status == STATUS_NEED_REVISION:
                 if self.model_invoked:
-                    self._record_chain(model_info, capability, "NEED_REVISION")
+                    self._record_chain(model_info, capability, "NEED_REVISION", step=message.step)
                 return response
 
             last_response = response
             if self.model_invoked:
-                self._record_chain(model_info, capability, "FAILED", response.error_code)
+                self._record_chain(model_info, capability, "FAILED", response.error_code,
+                                   step=message.step)
             failed_models.append(model_info["registered_name"])
 
             # 失败且仍可重试 → 换模型；否则终止
@@ -137,7 +138,7 @@ class BaseAgent(ABC):
         self._call_started_at = time.time()
 
     def _record_chain(self, model_info: dict, capability: str, status: str,
-                      error_code: Optional[int] = None) -> None:
+                      error_code: Optional[int] = None, step: int = 0) -> None:
         """记录一条调用链（供 Orchestrator 汇总落库）
 
         附带角色名与本次调用耗时（工单 T-01）：
@@ -157,6 +158,7 @@ class BaseAgent(ABC):
             attempted_at=str(now),
             agent=self.name,
             elapsed_ms=elapsed_ms,
+            step=step,
         ))
 
     def artifacts_from_response(self, response: AgentResponse) -> List[Artifact]:

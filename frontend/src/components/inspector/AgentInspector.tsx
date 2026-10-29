@@ -3,8 +3,7 @@ import { useTaskStore } from '../../stores/taskStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { AgentTraceResponse, CallChainEntry } from '../../types';
 import { getTaskAgents } from '../../api/task';
-import { CollabTopology } from './CollabTopology';
-import { CollabConversation } from './CollabConversation';
+import { CollabView } from './CollabView';
 import {
   Activity,
   CheckCircle2,
@@ -13,7 +12,6 @@ import {
   AlertTriangle,
   ShieldCheck,
   Cpu,
-  Workflow,
   Server,
   Zap,
   Check,
@@ -162,33 +160,6 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
     return fromEvents;
   }, [progressEvents]);
 
-  const groupedByAgent = useMemo(() => {
-    // 终态数据优先；运行中回退到实时事件聚合结果
-    const finalized = view?.callChain || [];
-    const chain = finalized.length > 0 ? finalized : liveChain;
-    const groups = new Map<string, CallChainEntry[]>();
-    chain.forEach((entry, idx) => {
-      // 老数据无 agent 字段时归入"未标注"组，不伪造角色名
-      const key = entry.agent || '未标注角色';
-      const list = groups.get(key) || [];
-      // 保留原始顺序，组内按调用先后排列
-      list.push({ ...entry, _idx: idx } as CallChainEntry & { _idx: number });
-      groups.set(key, list);
-    });
-    return Array.from(groups.entries()).map(([role, entries]) => {
-      const totalMs = entries.reduce((sum, e) => sum + (e.elapsed_ms || 0), 0);
-      const failures = entries.filter((e) => e.status !== 'SUCCESS');
-      return {
-        role,
-        entries,
-        totalMs,
-        // 降级次数：同一角色调用多个不同模型即为发生降级
-        degraded: new Set(entries.map((e) => e.model_name)).size > 1 && failures.length > 0,
-        failedCount: failures.length,
-        allOk: failures.length === 0,
-      };
-    });
-  }, [view, liveChain]);
 
   const getStatusBadge = (s: string) => {
     switch (s) {
@@ -377,18 +348,20 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
           </div>
         )}
 
-        {/* Pipeline Stage Tracker */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
+        {/* 编排管道阶段（压缩为一行细进度条）
+            四段是系统级固定状态机（答辩讲"状态机设计"时用），
+            与下方"任务级动态步骤"（协作链路）语义不同，故保留但只占一行。 */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[10px] font-medium text-slate-500">
             <span className="flex items-center gap-1">
               <Zap className="w-3 h-3 text-indigo-500" />
-              <span>编排管道阶段</span>
+              <span>编排管道</span>
             </span>
-            <span className="text-[10px] font-mono text-slate-400">
+            <span className="font-mono text-slate-400">
               {isExecuting && selectedHistoryIdx === null
-                ? `运行阶段 ${liveStage?.active ?? 1}/4`
+                ? `${liveStage?.active ?? 1}/4`
                 : status === 'SUCCESS'
-                ? '已完成 4/4'
+                ? '4/4 完成'
                 : status === 'PARTIAL_SUCCESS'
                 ? '带警告完成'
                 : status === 'FAILED'
@@ -397,35 +370,33 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
             </span>
           </div>
 
-          <div className="grid grid-cols-4 gap-1.5 pt-1">
+          <div className="flex items-center gap-1">
             {[
               { label: '意图拆解', step: 1 },
               { label: '模型路由', step: 2 },
               { label: '工件生成', step: 3 },
               { label: '规则核验', step: 4 },
-            ].map((s) => {
-              const st = getPipelineStepStatus(s.step);
+            ].map((s0, i) => {
+              const st = getPipelineStepStatus(s0.step);
+              const barCls =
+                st === 'done'
+                  ? 'bg-emerald-400'
+                  : st === 'active'
+                  ? 'bg-indigo-400 animate-pulse'
+                  : st === 'warning'
+                  ? 'bg-amber-400'
+                  : st === 'error'
+                  ? 'bg-rose-400'
+                  : 'bg-slate-200';
+              const textCls =
+                st === 'pending' ? 'text-slate-400' : 'text-slate-600';
               return (
-                <div
-                  key={s.step}
-                  className={`p-1.5 rounded-lg border text-center transition-all ${
-                    st === 'done'
-                      ? 'bg-emerald-50/70  border-emerald-200  text-emerald-700 '
-                      : st === 'active'
-                      ? 'bg-indigo-50  border-indigo-300  text-indigo-700  animate-pulse'
-                      : st === 'warning'
-                      ? 'bg-amber-50  border-amber-300  text-amber-700 '
-                      : st === 'error'
-                      ? 'bg-rose-50  border-rose-200  text-rose-700 '
-                      : 'bg-slate-50  border-slate-200/60  text-slate-400 '
-                  }`}
-                >
-                  <div className="text-[9px] font-mono font-bold leading-tight">
-                    0{s.step}
+                <div key={s0.step} className="flex-1 min-w-0" title={`0${s0.step} ${s0.label}`}>
+                  <div className={`h-1 rounded-full ${barCls}`} />
+                  <div className={`text-[9px] text-center truncate mt-0.5 ${textCls}`}>
+                    {s0.label}
                   </div>
-                  <div className="text-[10px] font-medium truncate mt-0.5">
-                    {s.label}
-                  </div>
+                  {i < 3 && <span className="hidden" />}
                 </div>
               );
             })}
@@ -461,113 +432,14 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({ width }) => {
           </div>
         )}
 
-        {/* 调用链路：按 Agent 角色分组（工单 T-02）
-            设计原则：只渲染后端已记录的事实，不做演示性装饰。
-            分组维度是 agent 而非 model —— 后者是单 Agent 调度器也会有的数据。 */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-              <Workflow className="w-3.5 h-3.5 text-indigo-600" />
-              <span>调用链路</span>
-            </div>
-            <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
-              {groupedByAgent.length} 个角色 ·{' '}
-              {(view?.callChain.length ?? 0) > 0
-                ? view?.callChain.length
-                : liveChain.length}{' '}
-              次调用
-              {failedCount > 0 && (
-                <span className="text-rose-500 font-semibold"> · {failedCount} 失败</span>
-              )}
-            </span>
-          </div>
-
-          {groupedByAgent.length === 0 ? (
-            <div className="text-xs text-slate-400 p-3 bg-slate-50 rounded-lg text-center border border-slate-100">
-              暂无执行调用记录
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {groupedByAgent.map((group) => (
-                <div
-                  key={group.role}
-                  className={`rounded-xl border p-2.5 space-y-1.5 ${
-                    group.allOk
-                      ? 'bg-white border-slate-200/80'
-                      : 'bg-rose-50/40 border-rose-200'
-                  }`}
-                >
-                  {/* 角色头：角色名 + 汇总状态 + 耗时 */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="w-2 h-2 rounded-full shrink-0 bg-indigo-500" />
-                      <span className="text-xs font-semibold text-slate-900 font-mono truncate">
-                        {group.role}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {group.degraded && (
-                        <span
-                          className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200/70"
-                          title="主模型失败后自动切换备用模型"
-                        >
-                          自动降级
-                        </span>
-                      )}
-                      {group.totalMs > 0 && (
-                        <span className="text-[10px] font-mono text-slate-400">
-                          {(group.totalMs / 1000).toFixed(1)}s
-                        </span>
-                      )}
-                      <span
-                        className={`text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded ${
-                          group.allOk
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-rose-50 text-rose-700'
-                        }`}
-                      >
-                        {group.allOk ? 'OK' : `${group.failedCount} 失败`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 组内调用明细：模型 + 能力 + 状态 + 单次耗时 */}
-                  <div className="space-y-1 pl-3.5 border-l border-slate-200/70 ml-1">
-                    {group.entries.map((entry, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 text-[10px]">
-                        <span className="flex items-center gap-1 min-w-0">
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              entry.status === 'SUCCESS' ? 'bg-emerald-500' : 'bg-rose-500'
-                            }`}
-                          />
-                          <span className="font-mono text-slate-700 truncate">{entry.model_name}</span>
-                        </span>
-                        <span className="flex items-center gap-1.5 shrink-0 text-slate-400">
-                          <span className="font-mono">{entry.capability}</span>
-                          {entry.elapsed_ms ? (
-                            <span className="font-mono text-slate-300">
-                              {(entry.elapsed_ms / 1000).toFixed(1)}s
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 协作拓扑（T-12）：产物在步骤间流动的依赖视图 */}
+        {/* 协作链路（合并视图）：步骤 → 角色 → 模型调用 → 产物，
+            替代此前的「调用链路 + 协作拓扑 + 协作对话」三块重复渲染。
+            原始消息保留为节点内可展开项，作为可视化未造假的追溯证据。 */}
         <div className="pt-2 border-t border-slate-100">
-          <CollabTopology steps={activeTrace?.steps} />
-        </div>
-
-        {/* 协作对话（T-13）：把派发/回收还原为一次往返对话 */}
-        <div className="pt-2 border-t border-slate-100">
-          <CollabConversation steps={activeTrace?.steps} />
+          <CollabView
+            steps={activeTrace?.steps}
+            callChain={(view?.callChain?.length ?? 0) > 0 ? view?.callChain : liveChain}
+          />
         </div>
 
         {/* Quality Audit Section */}

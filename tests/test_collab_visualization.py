@@ -12,6 +12,8 @@ import tempfile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.contracts import (Artifact, AgentMessage, AgentResponse, TaskContext)
+from src.core.base_agent import BaseAgent
+from src.core.models import LLMResponse, TaskResult
 from src.core.message_bus import MessageBus
 from src.core.storage import Storage
 
@@ -277,3 +279,99 @@ if __name__ == "__main__":
             print(f"[ERROR] {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n结果: {len(tests) - failed} 通过 / {failed} 失败")
     sys.exit(1 if failed else 0)
+
+
+# ----------------------------------------------------------------------
+# T-16：调用链带 step，支撑"步骤 → 角色 → 模型调用"归并
+# ----------------------------------------------------------------------
+class _FakeRouter:
+    def get_model(self, capability, failed_models=None):
+        # 必须尊重降级黑名单：否则基类在失败后会无限重取同一模型
+        if failed_models and "fake" in failed_models:
+            return {"error": "NO_AVAILABLE_MODEL"}
+        return {"registered_name": "fake", "model_name": "fake-model",
+                "endpoint": "http://fake", "api_key": "k", "capability": capability}
+
+
+class _FakeLLM:
+    def call(self, **kwargs):
+        return LLMResponse(status="SUCCESS",
+                           data=TaskResult(type="text", content="ok"),
+                           model_name="fake-model")
+
+
+class _RealBaseAgent(BaseAgent):
+    """真正继承 BaseAgent 的替身：用于验证调用链记录（含 step 字段）"""
+
+    def __init__(self, name="chain_agent", capability="text-generation"):
+        super().__init__(name=name, router=_FakeRouter(),
+                         llm_client=_FakeLLM(), capability=capability)
+
+    def _run(self, message, context, model_info):
+        # 必须显式声明"确实发起了模型调用"，否则基类不会记录调用链
+        # （这正是 T-08「技术债 A：打点分散、易漏」的直接体现）
+        self.model_invoked = True
+        self._mark_call_start()
+        self.llm_client.call(model_name=model_info["model_name"],
+                             endpoint=model_info["endpoint"],
+                             api_key=model_info["api_key"],
+                             prompt=message.prompt, output_type="text")
+        return AgentResponse.success(
+            self.name, artifacts=[Artifact.text_of("ok", step=message.step)],
+            output_text="ok",
+        )
+
+
+def test_call_chain_records_step():
+    """每个调用链条目应记录所属步骤号，否则前端无法把调用挂到步骤下"""
+    agent = _RealBaseAgent()
+    msg = AgentMessage(task_id="t", step=2, sender="orchestrator",
+                       receiver=agent.name, prompt="干活", session_id="s1")
+    resp = agent.execute(msg, TaskContext(task_id="t", session_id="s1", user_input=""))
+    assert resp.ok
+
+    chains = agent.drain_call_chain()
+    assert chains, "应产生调用链记录"
+    assert all(c.step == 2 for c in chains), \
+        f"step 应为 2，实际 {[c.step for c in chains]}"
+
+
+def test_call_chain_step_persisted_in_task_log():
+    """step 需随 call_chain 落库，历史回放才可按步骤归并"""
+    with tempfile.TemporaryDirectory() as d:
+        storage = Storage(db_path=os.path.join(d, "step.db"))
+        agent = _RealBaseAgent()
+        msg = AgentMessage(task_id="t2", step=3, sender="orchestrator",
+                           receiver=agent.name, prompt="干活", session_id="s1")
+        agent.execute(msg, TaskContext(task_id="t2", session_id="s1", user_input=""))
+        chains = agent.drain_call_chain()
+
+        storage.save_task_log(
+            task_id="ext-step2", session_id="s1",
+            frontend={"task_id": "ext-step2"},
+            log={"task_id": "t2", "task_status": "SUCCESS", "call_chain": []},
+            call_chain=chains,
+        )
+        rows = storage.get_task_history("s1", limit=5)
+        target = [r for r in rows if r["task_id"] == "ext-step2"]
+        assert target, "应能取到刚写入的任务日志"
+        assert target[0]["call_chain"][0]["step"] == 3
+
+
+def test_planning_call_recorded_by_orchestrator():
+    """Orchestrator 应补记一条 planning 调用（agent=orchestrator, step=0）。
+
+    TaskRouter 直接用 LLMClient，不经 BaseAgent，导致"意图拆解"的耗时
+    此前在观测视图中完全隐形，而它常常是最慢的一步。
+    """
+    from tests.test_orchestrator import _build_orchestrator
+
+    orch, _, _ = _build_orchestrator([
+        {"step": 1, "capability": "text-generation", "prompt": "写点东西"},
+    ])
+    result = orch.run("测试", "s1")
+    chain = result["log_record"]["call_chain"]
+
+    planning = [c for c in chain if c["agent"] == "orchestrator" and c["capability"] == "planning"]
+    assert planning, f"缺少 planning 调用记录: {chain}"
+    assert planning[0]["step"] == 0

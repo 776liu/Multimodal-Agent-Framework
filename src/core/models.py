@@ -57,6 +57,7 @@ class CallChainEntry:
     attempted_at: str = ""
     agent: str = ""            # 发起该调用的 Agent 角色名，如 writer_agent
     elapsed_ms: int = 0        # 本次模型调用耗时（毫秒）
+    step: int = 0              # 所属步骤号（0 = 任务级，如 orchestrator 的规划）
 
 @dataclass
 class BuilderInput:

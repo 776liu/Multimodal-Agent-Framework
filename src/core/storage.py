@@ -223,7 +223,8 @@ class Storage:
              # 多 Agent 可观测性字段（工单 T-01）：
              # 落库侧必须同步补齐，否则历史任务回放看不到角色名
              "agent": getattr(c, "agent", ""),
-             "elapsed_ms": getattr(c, "elapsed_ms", 0)}
+             "elapsed_ms": getattr(c, "elapsed_ms", 0),
+             "step": getattr(c, "step", 0)}
             for c in chain
         ]
 
@@ -408,6 +409,8 @@ class Storage:
                             "attempted_at": e.get("attempted_at", ""),
                             "agent": e.get("agent", ""),
                             "elapsed_ms": e.get("elapsed_ms", 0),
+                            # 步骤号（T-16）：前端按 step 把调用挂到对应节点下
+                            "step": e.get("step", 0),
                         }
                         for e in (chain_src or [])
                     ],

@@ -111,6 +111,10 @@ class TaskRouter:
     def __init__(self, router: Router , llm_client: LLMClient):
         self.router = router
         self.llm_client = llm_client
+        # 最近一次拆解实际使用的模型与结果状态（T-16）：
+        # 供 Orchestrator 记录"意图拆解"这条调用，否则拆解耗时在观测视图里是隐形的。
+        self.last_model_name: str = ""
+        self.last_status: str = ""
 
     def route_task(self, user_input: str) -> ExecutionPlan:
         """
@@ -118,6 +122,7 @@ class TaskRouter:
         """
 
         model_info = self.router.get_model("text-generation")
+        self.last_model_name = model_info.get("model_name", "") if "error" not in model_info else ""
 
         full_prompt = SYSTEM_PROMPT + user_input
 
@@ -129,6 +134,7 @@ class TaskRouter:
             output_type = "text"
         )
 
+        self.last_status = response.status
         if response.status == "SUCCESS" :
             try:
                 # 容错解析：模型有时会用 ```json ... ``` 代码块包裹 JSON，

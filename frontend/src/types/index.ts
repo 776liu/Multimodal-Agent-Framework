@@ -21,6 +21,8 @@ export interface CallChainEntry {
   agent?: string;
   /** 本次模型调用耗时（毫秒）。老数据缺此字段时为 0 */
   elapsed_ms?: number;
+  /** 所属步骤号（0 = 任务级，如 orchestrator 的意图拆解）。老数据为 0 */
+  step?: number;
 }
 
 /** 单次模型调用明细（T-15）：随 collecting 事件增量下发 */
@@ -32,6 +34,8 @@ export interface ProgressCallDetail {
   error_code?: number | null;
   elapsed_ms?: number;
   attempted_at?: string;
+  /** 所属步骤号（T-16） */
+  step?: number;
 }
 
 /** 任务进度事件（工单 T-01 /progress 端点） */

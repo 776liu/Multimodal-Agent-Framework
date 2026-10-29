@@ -105,7 +105,22 @@ class Orchestrator:
         if self.memory:
             full_input = self.memory.build_context(session_id, user_input)
 
+        # 记录"意图拆解"这条模型调用（T-16）。
+        # TaskRouter 直接用 LLMClient，不经 BaseAgent，因此其耗时此前在观测视图里隐形，
+        # 而它常常是最慢的一步（实测可达 30s+）。补记录后，协作链路可从
+        # "⓪ orchestrator 拆解" 完整讲起，无断点。
+        _plan_started = time.time()
         plan = self.task_router.route_task(full_input)
+        call_chain.append(CallChainEntry(
+            model_name=getattr(self.task_router, "last_model_name", "") or "task-router",
+            capability="planning",
+            status=getattr(self.task_router, "last_status", "") or "SUCCESS",
+            attempted_at=str(_plan_started),
+            agent="orchestrator",
+            elapsed_ms=int((time.time() - _plan_started) * 1000),
+            step=0,
+        ))
+
         if not plan or not plan.subtasks:
             return self._planning_failure(task_id, user_input, "TaskRouter返回为空计划")
 
@@ -200,6 +215,7 @@ class Orchestrator:
                         "error_code": c.error_code,
                         "elapsed_ms": c.elapsed_ms,
                         "attempted_at": c.attempted_at,
+                        "step": c.step,
                     }
                     for c in call_chain[chain_cursor:]
                 ],
